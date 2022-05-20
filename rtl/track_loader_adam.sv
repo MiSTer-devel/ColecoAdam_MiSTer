@@ -138,10 +138,10 @@ module track_loader_adam
   end
 
 `ifdef VERILATOR
-bram #(8,14) floppy_dpram_onetrack
+bram #(8,9) floppy_dpram_onetrack
 (
         .clock_a(clk),
-        .address_a({1'b0,track_sec, sd_buff_addr}),
+        .address_a(sd_buff_addr),
         .wren_a(sd_buff_wr & sd_ack),
         .data_a(sd_buff_dout),
         .q_a(sd_buff_din),
@@ -155,10 +155,10 @@ bram #(8,14) floppy_dpram_onetrack
 
 `else
 
-dpram #(14,8) floppy_dpram
+dpram #(9,8) floppy_dpram
 (
         .clock(clk),
-        .address_a({1'b0,track_sec, sd_buff_addr}),
+        .address_a(sd_buff_addr),
         .wren_a(sd_buff_wr & sd_ack),
         .data_a(sd_buff_dout),
         .q_a(sd_buff_din),
