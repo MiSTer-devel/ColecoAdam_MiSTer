@@ -18,7 +18,7 @@ This core is a conversion of the Colecovision core into verilog. Adam support wa
  * key repeat doesn't match original
  
 
-
+AdamNet adapted from ColEm https://fms.komkon.org/ColEm/
 Original colecovision core https://github.com/wsoltys/mist-cores/tree/master/fpga_colecovision
 Original MiSTer core https://github.com/MiSTer-Devel/ColecoVision_MiSTer/
 
