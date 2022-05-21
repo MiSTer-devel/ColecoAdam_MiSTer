@@ -72,9 +72,10 @@ module cv_console
    input                        clk_i,
    input                        clk_en_10m7_i,
    input                        reset_n_i,
-   input                        sg1000,
-   input                        dahjeeA_i, // SG-1000 RAM extension at 0x2000-0x3fff
+//   input                        sg1000,
+//   input                        dahjeeA_i, // SG-1000 RAM extension at 0x2000-0x3fff
    input                        adam,
+	input                        mode,
    output logic                 por_n_o,
    // Controller Interface ---------------------------------------------------
    input [1:0]                  ctrl_p1_i,
@@ -134,14 +135,14 @@ module cv_console
    input [7:0]                  vram_d_i,
    // Cartridge ROM Interface ------------------------------------------------
    output [19:0]                cart_a_o,
-   input [5:0]                  cart_pages_i,
-   output                       cart_en_80_n_o,
-   output                       cart_en_a0_n_o,
-   output                       cart_en_c0_n_o,
-   output                       cart_en_e0_n_o,
+//   input [5:0]                  cart_pages_i,
+//   output                       cart_en_80_n_o,
+//   output                       cart_en_a0_n_o,
+//   output                       cart_en_c0_n_o,
+//   output                       cart_en_e0_n_o,
    output                       cart_rd,
    input [7:0]                  cart_d_i,
-   output                       cart_en_sg1000_n_o,
+//   output                       cart_en_sg1000_n_o,
    // RGB Video Interface ----------------------------------------------------
    input                        border_i,
    output [3:0]                 col_o,
@@ -210,12 +211,6 @@ module cv_console
   logic          psg_ready_s;
   logic [7:0]    psg_audio_s;
 
-  // AY-8910 signal
-  logic [7:0]    ay_d_s;
-  logic [7:0]    ay_ch_a_s;
-  logic [7:0]    ay_ch_b_s;
-  logic [7:0]    ay_ch_c_s;
-
   logic [9:0]    audio_mix;
 
   // Controller signals
@@ -241,13 +236,7 @@ module cv_console
   logic          ctrl_r_n_s;
   logic          ctrl_en_key_n_s;
   logic          ctrl_en_joy_n_s;
-  logic          cart_en_80_n_s;
-  logic          cart_en_a0_n_s;
-  logic          cart_en_c0_n_s;
-  logic          cart_en_e0_n_s;
-  logic [5:0]    cart_page_s;
-
-  logic          cart_en_sg1000_n_s;
+  
   // misc signals
   logic          vdd_s;
 
@@ -260,11 +249,11 @@ module cv_console
   end
 
   assign vdd_s   = '1;
-  assign audio_o = ({1'b0, psg_audio_s, 2'b00}) + ay_ch_a_s + ay_ch_b_s + ay_ch_c_s;
+  assign audio_o = ({psg_audio_s, 3'b00});
 
-  assign int_n_s = ~sg1000 ? 1'b1 : vdp_int_n_s;
-  assign nmi_n_s = ~sg1000 ? vdp_int_n_s : joy0_i[7] & joy1_i[7];
-
+  assign int_n_s =  1'b1;
+  assign nmi_n_s =  vdp_int_n_s;
+ 
   //---------------------------------------------------------------------------
   // Reset generation
   //   Generate a power-on reset for 4 clock cycles.
@@ -353,29 +342,6 @@ module cv_console
 `endif
 
 
-  YM2149 ym2149_inst(
-                     .CLK(clk_i),
-                     .CE(clk_en_3m58_p_s),
-                     .RESET((~reset_n_s)),
-                     .BDIR((~ay_addr_we_n_s) | (~ay_data_we_n_s)),
-                     .BC((~ay_addr_we_n_s) | (~ay_data_rd_n_s)),
-                     .DI(d_from_cpu_s),
-                     .DO(ay_d_s),
-                     .CHANNEL_A(ay_ch_a_s),
-                     .CHANNEL_B(ay_ch_b_s),
-                     .CHANNEL_C(ay_ch_c_s),
-
-                     .SEL(1'b0),
-                     .MODE(1'b0),
-
-                     .ACTIVE(),
-
-                     .IOA_in(1'b0),
-                     .IOA_out(),
-
-                     .IOB_in(1'b0),
-                     .IOB_out()
-                     );
 
   //---------------------------------------------------------------------------
   // Process m1_wait
@@ -383,21 +349,7 @@ module cv_console
   // Purpose:
   //   Implements flip-flop U8A which asserts a wait states controlled by M1.
   //
-  /*
-  initial begin
-    m1_wait_q = '0;
-  end
-  always @(posedge clk_i or negedge reset_n_s or posedge m1_n_s)
-    begin: m1_wait
-      if (~reset_n_s | m1_n_s)
-        m1_wait_q <= '0;
-      else
-        begin
-          if (clk_en_3m58_p_s)
-            m1_wait_q <= '1; //(~m1_wait_q);
-        end
-    end
-*/
+
   logic bad_reset;
   assign bad_reset = reset_n_s | ~m1_n_s;
   always @(posedge clk_i or posedge bad_reset) //reset_n_s or posedge m1_n_s)
@@ -490,13 +442,10 @@ module cv_console
   cv_addr_dec addr_dec_b(
                          .clk_i(clk_i),
                          .reset_n_i(reset_n_i),
-                         .sg1000(sg1000),
-                         .dahjeeA_i(dahjeeA_i),
                          .adam(adam),
+								 .mode(mode),
                          .a_i(a_s),
                          .d_i(d_from_cpu_s),
-                         .cart_pages_i(cart_pages_i),
-                         .cart_page_o(cart_page_s),
                          .iorq_n_i(iorq_n_s),
                          .rd_n_i(rd_n_s),
                          .wr_n_i(wr_n_s),
@@ -513,30 +462,15 @@ module cv_console
                          .vdp_r_n_o(vdp_r_n_s),
                          .vdp_w_n_o(vdp_w_n_s),
                          .psg_we_n_o(psg_we_n_s),
-                         .ay_addr_we_n_o(ay_addr_we_n_s),
-                         .ay_data_we_n_o(ay_data_we_n_s),
-                         .ay_data_rd_n_o(ay_data_rd_n_s),
                          .adam_reset_pcb_n_o(adam_reset_pcb_n_s),
                          .ctrl_r_n_o(ctrl_r_n_s),
                          .ctrl_en_key_n_o(ctrl_en_key_n_s),
-                         .ctrl_en_joy_n_o(ctrl_en_joy_n_s),
-                         .cart_en_80_n_o(cart_en_80_n_s),
-                         .cart_en_a0_n_o(cart_en_a0_n_s),
-                         .cart_en_c0_n_o(cart_en_c0_n_s),
-                         .cart_en_e0_n_o(cart_en_e0_n_s),
-                         .cart_en_sg1000_n_o(cart_en_sg1000_n_s)
+                         .ctrl_en_joy_n_o(ctrl_en_joy_n_s)
                          );
 
   reg wr_z80;
   reg rd_z80;
-     // Dual port or mux into ADAM system memory
-  //logic [15:0] ramb_addr;
-  //logic        ramb_wr;
-  //logic        ramb_rd;
-  //logic [7:0]  ramb_dout;
-  //logic [7:0]  ramb_din;
-  //logic        ramb_wr_ack;
-  //logic        ramb_rd_ack;
+  
 
    // Keyboard interface. Not sure how we should do this
   logic [7:0]  kbd_status;
@@ -612,28 +546,27 @@ module cv_console
   assign cpu_ram_ce_n_o = ram_ce_n_s;
   assign cpu_lowerexpansion_ram_ce_n_o = lowerexpansion_ram_ce_n_s;
   assign cpu_upper_ram_ce_n_o = upper_ram_ce_n_s;
+  
+ // assign cpu_expansion_rom_ce_n_o = expansion_rom_ce_n_s;
+
   assign cpu_ram_we_n_o = wr_n_s;
   assign cpu_lowerexpansion_ram_we_n_o = wr_n_s;
   assign cpu_upper_ram_we_n_o = wr_n_s;
   assign cpu_ram_rd_n_o = rd_n_s;
   assign cpu_lowerexpansion_ram_rd_n_o = rd_n_s;
   assign cpu_upper_ram_rd_n_o = rd_n_s;
-  assign cart_en_80_n_o = cart_en_80_n_s;
-  assign cart_en_a0_n_o = cart_en_a0_n_s;
-  assign cart_en_c0_n_o = cart_en_c0_n_s;
-  assign cart_en_e0_n_o = cart_en_e0_n_s;
-  assign cart_en_sg1000_n_o = cart_en_sg1000_n_s;
-  assign cart_rd = (~(cart_en_80_n_s & cart_en_a0_n_s & cart_en_c0_n_s & cart_en_e0_n_s & cart_en_sg1000_n_s));
-
+//  assign cart_en_80_n_o = cart_en_80_n_s;
+//  assign cart_en_a0_n_o = cart_en_a0_n_s;
+//  assign cart_en_c0_n_o = cart_en_c0_n_s;
+//  assign cart_en_e0_n_o = cart_en_e0_n_s;
+//  assign cart_en_sg1000_n_o = cart_en_sg1000_n_s;
+  //assign cart_rd = (~(cart_en_80_n_s & cart_en_a0_n_s & cart_en_c0_n_s & cart_en_e0_n_s & cart_en_sg1000_n_s));
+  assign cart_rd = ~expansion_rom_ce_n_s;
   //---------------------------------------------------------------------------
   // Bus multiplexer
   //---------------------------------------------------------------------------
 
-  assign d_to_ctrl_s = (sg1000 == 1'b0) ? d_from_ctrl_s :
-                       (a_s[0] == 1'b0) ? {joy1_i[2], joy1_i[3], joy0_i[5], joy0_i[4], joy0_i[0], joy0_i[1], joy0_i[2], joy0_i[3]} :
-                       {3'b111, reset_n_i, joy1_i[5], joy1_i[4], joy1_i[0], joy1_i[1]};
-
-
+  assign d_to_ctrl_s = d_from_ctrl_s ;
 
 
     //---------------------------------------------------------------------------
@@ -651,6 +584,7 @@ module cv_console
     logic [7:0]        d_ram_v;
     logic [7:0]        d_lowerexpansion_ram_v;
     logic [7:0]        d_upper_ram_v;
+    logic [7:0]        d_expansion_rom_v;
     logic [7:0]        d_vdp_v;
     logic [7:0]        d_ctrl_v;
     logic [7:0]        d_cart_v;
@@ -662,6 +596,7 @@ module cv_console
     d_writer_v = '1;
     d_ram_v  = '1;
     d_upper_ram_v  = '1;
+	 d_expansion_rom_v = '1;
     d_lowerexpansion_ram_v  = '1;
     d_vdp_v  = '1;
     d_ctrl_v = '1;
@@ -674,20 +609,15 @@ module cv_console
     if (~ram_ce_n_s)            d_ram_v  = cpu_ram_d_i;
     if (~lowerexpansion_ram_ce_n_s)            d_lowerexpansion_ram_v  = cpu_lowerexpansion_ram_d_i;
     if (~upper_ram_ce_n_s)      d_upper_ram_v = adamnet_sel ? adamnet_dout : cpu_upper_ram_d_i;
+    if (~expansion_rom_ce_n_s)  d_expansion_rom_v =cart_d_i;
     if (~vdp_r_n_s)             d_vdp_v  = d_from_vdp_s;
     if (~ctrl_r_n_s)            d_ctrl_v = d_to_ctrl_s;
-    if (~(cart_en_80_n_s &&
-          cart_en_a0_n_s &&
-          cart_en_c0_n_s &&
-          cart_en_e0_n_s &&
-          cart_en_sg1000_n_s))  d_cart_v = cart_d_i;
-    if (~ay_data_rd_n_s)        d_ay_v   = ay_d_s;
 
-    d_to_cpu_s = d_bios_v & d_eos_v & d_writer_v & d_ram_v & d_upper_ram_v & d_vdp_v & d_ctrl_v & d_cart_v & d_ay_v & d_lowerexpansion_ram_v;
+    d_to_cpu_s = d_bios_v & d_eos_v & d_writer_v & d_ram_v & d_upper_ram_v & d_expansion_rom_v & d_vdp_v & d_ctrl_v & d_lowerexpansion_ram_v;
   end
 
 // for debugging
-wire rom_read /*verilator public_flat*/  = (~bios_rom_ce_n_s | ~eos_rom_ce_n_s | ~writer_rom_ce_n_s | ~upper_ram_ce_n_s) && ~mreq_n_s && rfsh_n_s && iorq_n_s && ~rd_n_s ;
+wire rom_read /*verilator public_flat*/  = (~bios_rom_ce_n_s | ~eos_rom_ce_n_s | ~writer_rom_ce_n_s | ~upper_ram_ce_n_s | ~expansion_rom_ce_n_s ) && ~mreq_n_s && rfsh_n_s && iorq_n_s && ~rd_n_s ;
 
 
 always @(posedge clk_i)
@@ -718,24 +648,7 @@ begin
 end
 end
 
-/*
-else begin
-$display("mreq %x rfrsh %x iorq %x rd_n_s %x  wr_n_s %x",mreq_n_s , rfsh_n_s , iorq_n_s  ,rd_n_s, wr_n_s);
-end
-*/
-/*
- if ((~rd_n_s | ~wr_n_s))  $display("expansion: %x a %x  bios %x eos %x writer %x ram %x upperram %x vdp %x ctrl %x cart %x ay %x addr %x write %x",d_to_cpu_s,
-    a_s,
-        (bios_rom_ce_n_s == 1'b0),
-        (eos_rom_ce_n_s == 1'b0),
-        (writer_rom_ce_n_s == 1'b0),
-        (ram_ce_n_s == 1'b0),
-        (upper_ram_ce_n_s == 1'b0),
-        (vdp_r_n_s == 1'b0),
-        (ctrl_r_n_s == 1'b0),
-        ((cart_en_80_n_s & cart_en_a0_n_s & cart_en_c0_n_s & cart_en_e0_n_s & cart_en_sg1000_n_s) == 1'b0),
-        (ay_data_rd_n_s == 1'b0),a_s,d_from_cpu_s,~wr_n_s);
-*/
+
 end
 
     always_comb begin
@@ -766,12 +679,11 @@ end
   assign eos_rom_a_o       = a_s[13:0];
   assign bios_rom_a_o      = a_s[12:0];
   assign cpu_ram_a_o       = a_s[14:0];
-  assign cpu_lowerexpansion_ram_a_o       = a_s[14:0];
+  assign cpu_lowerexpansion_ram_a_o = a_s[14:0];
   assign cpu_upper_ram_a_o = a_s[14:0];
   assign cpu_ram_d_o       = d_from_cpu_s;
   assign cpu_lowerexpansion_ram_d_o       = d_from_cpu_s;
   assign cpu_upper_ram_d_o = d_from_cpu_s;
-  assign cart_a_o = (sg1000 == 1'b0) ? {cart_page_s, a_s[13:0]} :
-                    {4'b0000, a_s[15:0]};
+  assign cart_a_o ={4'b0000, a_s[15:0]};
 
 endmodule

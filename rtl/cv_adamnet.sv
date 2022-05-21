@@ -762,6 +762,7 @@ module cv_adamnet
   logic        shift;
   logic        ctrl;
   logic        caps_lock;
+  logic        osd;
   logic        watch_key;
   logic [22:0] key_rep_timer;
 
@@ -930,6 +931,8 @@ module cv_adamnet
       else if (ps2_key[8:0] == 9'h012) shift <= ps2_key[9]; //LEFT SHIFT
       else if (ps2_key[8:0] == 9'h058) begin if (ps2_key[9]) caps_lock<=~caps_lock; end  //CAPSLOCK
       else if (ps2_key[8:0] == 9'h059) shift <= ps2_key[9]; //RIGHT SHIFT
+		else if (ps2_key[8:0] == 9'h007) osd <= ps2_key[9]; //OSD ignore key
+		
       else begin
         press_btn    <= ps2_key[9];
         code         <= ps2_key[7:0];
