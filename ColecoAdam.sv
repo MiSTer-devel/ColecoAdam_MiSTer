@@ -214,7 +214,6 @@ parameter CONF_STR = {
         "Adam;;",
         "-;",
         "F,COLBINROM;",
-        "F,SG,Load SG-1000;",
         "S0,DSK,Load Floppy 1;",
         "S1,DSK,Load Floppy 2;",
         "S2,DSK,Load Floppy 3;",
@@ -233,7 +232,7 @@ parameter CONF_STR = {
         "O3,Joysticks swap,No,Yes;",
         "-;",
         "O45,RAM Size,1KB,8KB,SGM;",
-                  "OC,Adam Mode,On,Off;",
+        "OC,Mode,Computer,Console;",
         "R0,Reset;",
         "J,Fire 1,Fire 2,*,#,0,1,2,3,4,5,6,7,8,9,Purple Tr,Blue Tr;",
         "V,v",`BUILD_DATE
@@ -376,14 +375,7 @@ wire [14:0] cpu_ram_a;
 wire        ram_we_n, ram_ce_n;
 wire  [7:0] ram_di;
 wire  [7:0] ram_do;
-
-//wire [14:0] ram_a = cpu_ram_a;
-
-wire [14:0] ram_a = (extram|adam)            ? cpu_ram_a       :
-                    (status[5:4] == 1)  ? cpu_ram_a[12:0] : // 8k
-                    (status[5:4] == 0)  ? cpu_ram_a[9:0]  : // 1k
-                    (sg1000)            ? cpu_ram_a[12:0] : // SGM means 8k on SG1000
-                                          cpu_ram_a;        // SGM/32k
+wire [14:0] ram_a = cpu_ram_a;
 
 
 
@@ -474,38 +466,16 @@ spramv #(14) vram
 
 wire [19:0] cart_a;
 wire  [7:0] cart_d;
-wire        cart_rd;
 
-reg [5:0] cart_pages;
-always @(posedge clk_sys) if(ioctl_wr) cart_pages <= ioctl_addr[19:14];
-
-assign SDRAM_CLK = ~clk_sys;
-sdram sdram
-(
-   .*,
-   .init(~pll_locked),
-   .clk(clk_sys),
-
-   .wtbt(0),
-   .addr(ioctl_download ? ioctl_addr : cart_a),
-   .rd(cart_rd),
-   .dout(cart_d),
-   .din(ioctl_dout),
-   .we(ioctl_wr),
-   .ready()
-);
-
-reg sg1000 = 0;
-reg extram = 0;
-always @(posedge clk_sys) begin
-        if(ioctl_wr) begin
-                if(!ioctl_addr) begin
-                        extram <= 0;
-                        sg1000 <= (ioctl_index[4:0] == 2);
-                end
-                if(ioctl_addr[24:13] == 1 && sg1000) extram <= (!ioctl_addr[12:0] | extram) & &ioctl_dout; // 2000-3FFF on SG-1000
-        end
-end
+spramv #(15) rom_expansion
+    (
+     .clock(clk_sys),
+     .address(ioctl_download ? ioctl_addr : cart_a),
+     .wren(ioctl_wr),
+     .data(ioctl_dout),
+     .q(cart_d),
+     .cs(1'b1)
+     );
 
 
 ////////////////  Console  ////////////////////////
@@ -535,7 +505,7 @@ wire hsync, vsync;
 wire [31:0] joya = status[3] ? joy1 : joy0;
 wire [31:0] joyb = status[3] ? joy0 : joy1;
 
-wire adam=~status[12];
+wire mode=~status[12];
 
   logic [TOT_DISKS-1:0] disk_present;
   logic [31:0]          disk_sector; // sector
@@ -561,10 +531,8 @@ cv_console
         .clk_en_10m7_i(ce_10m7),
         .reset_n_i(~reset),
         .por_n_o(),
-        .sg1000(sg1000),
-        .dahjeeA_i(extram),
-        .adam(adam),
-
+        .adam(1'b1),
+        .mode(~mode),
         .ctrl_p1_i(ctrl_p1),
         .ctrl_p2_i(ctrl_p2),
         .ctrl_p3_i(ctrl_p3),
@@ -616,10 +584,8 @@ cv_console
         .vram_d_o(vram_do),
         .vram_d_i(vram_di),
 
-        .cart_pages_i(cart_pages),
         .cart_a_o(cart_a),
         .cart_d_i(cart_d),
-        .cart_rd(cart_rd),
 
         .border_i(status[6]),
         .rgb_r_o(R),
@@ -643,6 +609,8 @@ cv_console
         .disk_din(disk_din),
         .ps2_key     (ps2_key)
 );
+
+
   genvar                tla_i;
   generate
     for (tla_i = 0; tla_i < TOT_DISKS; tla_i++) begin : g_TL
