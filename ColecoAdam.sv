@@ -532,7 +532,7 @@ cv_console
         .reset_n_i(~reset),
         .por_n_o(),
         .adam(1'b1),
-        .mode(mode),
+        .mode(~mode),
         .ctrl_p1_i(ctrl_p1),
         .ctrl_p2_i(ctrl_p2),
         .ctrl_p3_i(ctrl_p3),
