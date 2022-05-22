@@ -135,14 +135,11 @@ module cv_console
    input [7:0]                  vram_d_i,
    // Cartridge ROM Interface ------------------------------------------------
    output [19:0]                cart_a_o,
-//   input [5:0]                  cart_pages_i,
-//   output                       cart_en_80_n_o,
-//   output                       cart_en_a0_n_o,
-//   output                       cart_en_c0_n_o,
-//   output                       cart_en_e0_n_o,
-   output                       cart_rd,
    input [7:0]                  cart_d_i,
-//   output                       cart_en_sg1000_n_o,
+   // extended ROM Interface ------------------------------------------------
+   output [19:0]                ext_rom_a_o,
+   input [7:0]                  ext_rom_d_i,
+
    // RGB Video Interface ----------------------------------------------------
    input                        border_i,
    output [3:0]                 col_o,
@@ -224,6 +221,7 @@ module cv_console
   logic          upper_ram_ce_n_s;
   logic          expansion_ram_ce_n_s;
   logic          expansion_rom_ce_n_s;
+  logic          cartridge_rom_ce_n_s;
   logic          ram_ce_n_s;
   logic          lowerexpansion_ram_ce_n_s;
   logic          vdp_r_n_s;
@@ -459,6 +457,7 @@ module cv_console
                          .upper_ram_ce_n_o(upper_ram_ce_n_s),
                          .expansion_ram_ce_n_o(expansion_ram_ce_n_s),
                          .expansion_rom_ce_n_o(expansion_rom_ce_n_s),
+								 .cartridge_rom_ce_n_o(cartridge_rom_ce_n_s),
                          .vdp_r_n_o(vdp_r_n_s),
                          .vdp_w_n_o(vdp_w_n_s),
                          .psg_we_n_o(psg_we_n_s),
@@ -555,13 +554,6 @@ module cv_console
   assign cpu_ram_rd_n_o = rd_n_s;
   assign cpu_lowerexpansion_ram_rd_n_o = rd_n_s;
   assign cpu_upper_ram_rd_n_o = rd_n_s;
-//  assign cart_en_80_n_o = cart_en_80_n_s;
-//  assign cart_en_a0_n_o = cart_en_a0_n_s;
-//  assign cart_en_c0_n_o = cart_en_c0_n_s;
-//  assign cart_en_e0_n_o = cart_en_e0_n_s;
-//  assign cart_en_sg1000_n_o = cart_en_sg1000_n_s;
-  //assign cart_rd = (~(cart_en_80_n_s & cart_en_a0_n_s & cart_en_c0_n_s & cart_en_e0_n_s & cart_en_sg1000_n_s));
-  assign cart_rd = ~expansion_rom_ce_n_s;
   //---------------------------------------------------------------------------
   // Bus multiplexer
   //---------------------------------------------------------------------------
@@ -585,9 +577,9 @@ module cv_console
     logic [7:0]        d_lowerexpansion_ram_v;
     logic [7:0]        d_upper_ram_v;
     logic [7:0]        d_expansion_rom_v;
+	 logic [7:0]        d_cartridge_rom_v;
     logic [7:0]        d_vdp_v;
     logic [7:0]        d_ctrl_v;
-    logic [7:0]        d_cart_v;
     logic [7:0]        d_ay_v;
 
     // default assignments
@@ -597,27 +589,24 @@ module cv_console
     d_ram_v  = '1;
     d_upper_ram_v  = '1;
 	 d_expansion_rom_v = '1;
+	 d_cartridge_rom_v = '1;
     d_lowerexpansion_ram_v  = '1;
     d_vdp_v  = '1;
     d_ctrl_v = '1;
-    d_cart_v = '1;
-    d_ay_v   = '1;
-
+ 
     if (~bios_rom_ce_n_s)       d_bios_v = bios_rom_d_i;
     if (~eos_rom_ce_n_s)        d_eos_v = eos_rom_d_i;
     if (~writer_rom_ce_n_s)     d_writer_v = writer_rom_d_i;
     if (~ram_ce_n_s)            d_ram_v  = cpu_ram_d_i;
     if (~lowerexpansion_ram_ce_n_s)            d_lowerexpansion_ram_v  = cpu_lowerexpansion_ram_d_i;
     if (~upper_ram_ce_n_s)      d_upper_ram_v = adamnet_sel ? adamnet_dout : cpu_upper_ram_d_i;
-    if (~expansion_rom_ce_n_s)  d_expansion_rom_v =cart_d_i;
+    if (~expansion_rom_ce_n_s)  d_expansion_rom_v = ext_rom_d_i;
+    if (~cartridge_rom_ce_n_s)  d_cartridge_rom_v = cart_d_i;
     if (~vdp_r_n_s)             d_vdp_v  = d_from_vdp_s;
     if (~ctrl_r_n_s)            d_ctrl_v = d_to_ctrl_s;
 
-    d_to_cpu_s = d_bios_v & d_eos_v & d_writer_v & d_ram_v & d_upper_ram_v & d_expansion_rom_v & d_vdp_v & d_ctrl_v & d_lowerexpansion_ram_v;
+    d_to_cpu_s = d_bios_v & d_eos_v & d_writer_v & d_ram_v & d_upper_ram_v & d_expansion_rom_v & d_cartridge_rom_v & d_vdp_v & d_ctrl_v & d_lowerexpansion_ram_v;
   end
-
-// for debugging
-wire rom_read /*verilator public_flat*/  = (~bios_rom_ce_n_s | ~eos_rom_ce_n_s | ~writer_rom_ce_n_s | ~upper_ram_ce_n_s | ~expansion_rom_ce_n_s ) && ~mreq_n_s && rfsh_n_s && iorq_n_s && ~rd_n_s ;
 
 
 always @(posedge clk_i)

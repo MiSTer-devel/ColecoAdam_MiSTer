@@ -213,7 +213,8 @@ video_freak video_freak
 parameter CONF_STR = {
         "Adam;;",
         "-;",
-        "F,COLBINROM;",
+        "F,COLBINROM,Load CART;",
+        "F,COLBINROM,Load Ext. ROM;",
         "S0,DSK,Load Floppy 1;",
         "S1,DSK,Load Floppy 2;",
         "S2,DSK,Load Floppy 3;",
@@ -467,16 +468,28 @@ spramv #(14) vram
 wire [19:0] cart_a;
 wire  [7:0] cart_d;
 
-spramv #(15) rom_expansion
+spramv #(15) rom_cartridge
     (
      .clock(clk_sys),
-     .address(ioctl_download ? ioctl_addr : cart_a),
+     .address((ioctl_download && ioctl_index[4:0]==1)? ioctl_addr : cart_a),
      .wren(ioctl_wr),
      .data(ioctl_dout),
      .q(cart_d),
      .cs(1'b1)
      );
 
+wire [19:0] ext_rom_a;
+wire  [7:0] ext_rom_d;
+
+spramv #(15) extended_rom
+    (
+     .clock(clk_sys),
+     .address((ioctl_download && ioctl_index[4:0] == 2) ? ioctl_addr : ext_rom_a),
+     .wren(ioctl_wr),
+     .data(ioctl_dout),
+     .q(ext_rom_d),
+     .cs(1'b1)
+     );
 
 ////////////////  Console  ////////////////////////
 
@@ -586,6 +599,10 @@ cv_console
 
         .cart_a_o(cart_a),
         .cart_d_i(cart_d),
+		  
+		  .ext_rom_a_o(ext_rom_a),
+		  .ext_rom_d_i(ext_rom_d),
+
 
         .border_i(status[6]),
         .rgb_r_o(R),
