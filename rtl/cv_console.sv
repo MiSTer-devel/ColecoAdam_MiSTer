@@ -247,7 +247,7 @@ module cv_console
   end
 
   assign vdd_s   = '1;
-  assign audio_o = ({psg_audio_s, 3'b00});
+  assign audio_o = ({psg_audio_s,1'b0});
 
   assign int_n_s =  1'b1;
   assign nmi_n_s =  vdp_int_n_s;
