@@ -72,8 +72,6 @@ module cv_console
    input                        clk_i,
    input                        clk_en_10m7_i,
    input                        reset_n_i,
-//   input                        sg1000,
-//   input                        dahjeeA_i, // SG-1000 RAM extension at 0x2000-0x3fff
    input                        adam,
 	input                        mode,
    output logic                 por_n_o,
@@ -213,6 +211,7 @@ module cv_console
   // Controller signals
   logic [7:0]    d_from_ctrl_s;
   logic [7:0]    d_to_ctrl_s;
+  logic          ctrl_int_n_s;
 
   // Address decoder signals
   logic          bios_rom_ce_n_s;
@@ -247,9 +246,9 @@ module cv_console
   end
 
   assign vdd_s   = '1;
-  assign audio_o = ({psg_audio_s,1'b0});
+  assign audio_o = {psg_audio_s,1'b0};
 
-  assign int_n_s =  1'b1;
+  assign int_n_s =  ctrl_int_n_s;
   assign nmi_n_s =  vdp_int_n_s;
  
   //---------------------------------------------------------------------------
@@ -289,7 +288,7 @@ module cv_console
   // T80 CPU
   //---------------------------------------------------------------------------
 
-  //`ifdef VERILATOR
+  `ifdef VERILATOR
 
   tv80e Cpu
     (
@@ -313,8 +312,9 @@ module cv_console
      .di          (d_to_cpu_s),
      .dout        (d_from_cpu_s)
      );
-  //`else
-`ifdef NO
+	  
+  `else
+
   T80pa #(.mode(0)) t80a_b(
                            .reset_n(reset_n_s),
                            .clk(clk_i),
@@ -334,7 +334,7 @@ module cv_console
                            .busak_n(),
                            .a(a_s),
                            .di(d_to_cpu_s),
-                           .do(d_from_cpu_s)
+                           .dout(d_from_cpu_s)
                            );
 
 `endif
@@ -430,7 +430,8 @@ module cv_console
                  .ctrl_p7_i(ctrl_p7_i),
                  .ctrl_p8_o(ctrl_p8_o),
                  .ctrl_p9_i(ctrl_p9_i),
-                 .d_o(d_from_ctrl_s)
+                 .d_o(d_from_ctrl_s),
+					  .int_n_o(ctrl_int_n_s)
                  );
 
   //---------------------------------------------------------------------------
