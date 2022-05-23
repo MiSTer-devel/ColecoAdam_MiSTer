@@ -12,11 +12,10 @@ This core is a conversion of the Colecovision core into verilog. Adam support wa
 ### Known Bugs
 
  * there is often a bad character the first time something is types
- * the Adam ROM mode doesn't seem to work
  * reset doesn't work quite the same as Adam
  * no printer support
  * key repeat doesn't match original
- 
+ * tape/disk write is not supported (should be easy to add) 
 
 AdamNet adapted from ColEm https://fms.komkon.org/ColEm/
 Original colecovision core https://github.com/wsoltys/mist-cores/tree/master/fpga_colecovision
