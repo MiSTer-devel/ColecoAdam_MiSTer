@@ -81,7 +81,7 @@ entity T80pa is
 		OUT0        : in  std_logic := '0';  -- 0 => OUT(C),0, 1 => OUT(C),255
 		A           : out std_logic_vector(15 downto 0);
 		DI          : in  std_logic_vector(7 downto 0);
-		DO          : out std_logic_vector(7 downto 0);
+		DOUT        : out std_logic_vector(7 downto 0);
 		REG         : out std_logic_vector(211 downto 0); -- IFF2, IFF1, IM, IY, HL', DE', BC', IX, HL, DE, BC, PC, SP, R, I, F', A', F, A
 		DIRSet      : in  std_logic := '0';
 		DIR         : in  std_logic_vector(211 downto 0) := (others => '0') -- IFF2, IFF1, IM, IY, HL', DE', BC', IX, HL, DE, BC, PC, SP, R, I, F', A', F, A
@@ -132,7 +132,7 @@ begin
 			A       => A_int,
 			DInst   => DI,     -- valid   at beginning of T3
 			DI      => DI_Reg, -- latched at middle    of T3
-			DO      => DO,
+			DO      => DOUT,
 			REG     => REG,
 			MC      => MCycle,
 			TS      => TState,

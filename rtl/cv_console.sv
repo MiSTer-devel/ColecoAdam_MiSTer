@@ -289,7 +289,7 @@ module cv_console
   // T80 CPU
   //---------------------------------------------------------------------------
 
-  //`ifdef VERILATOR
+`ifdef VERILATOR
 
   tv80e Cpu
     (
@@ -313,8 +313,7 @@ module cv_console
      .di          (d_to_cpu_s),
      .dout        (d_from_cpu_s)
      );
-  //`else
-`ifdef NO
+`else
   T80pa #(.mode(0)) t80a_b(
                            .reset_n(reset_n_s),
                            .clk(clk_i),
@@ -334,7 +333,7 @@ module cv_console
                            .busak_n(),
                            .a(a_s),
                            .di(d_to_cpu_s),
-                           .do(d_from_cpu_s)
+                           .dout(d_from_cpu_s)
                            );
 
 `endif
