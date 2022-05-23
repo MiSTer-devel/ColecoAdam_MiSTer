@@ -69,7 +69,8 @@ module cv_addr_dec
    output logic       upper_ram_ce_n_o,
    output logic       expansion_ram_ce_n_o,
    output logic       expansion_rom_ce_n_o,
-   output logic       vdp_r_n_o,
+	output logic       cartridge_rom_ce_n_o,
+	output logic       vdp_r_n_o,
    output logic       vdp_w_n_o,
    output logic       psg_we_n_o,
 
@@ -100,12 +101,13 @@ module cv_addr_dec
     bios_rom_ce_n_o    = '1;
     eos_rom_ce_n_o     = '1;
     writer_rom_ce_n_o  = '1;
-    eos_rom_ce_n_o  = '1;
+    eos_rom_ce_n_o     = '1;
     ram_ce_n_o         = '1;
     lowerexpansion_ram_ce_n_o         = '1;
     upper_ram_ce_n_o   = '1;
     expansion_ram_ce_n_o='1;
     expansion_rom_ce_n_o='1;
+    cartridge_rom_ce_n_o='1;
     vdp_r_n_o          = '1;
     vdp_w_n_o          = '1;
     psg_we_n_o         = '1;
@@ -126,10 +128,13 @@ module cv_addr_dec
         if (lower_mem == 2'b11) begin  // OS7 / 24k RAM
           case (a_i[15:13])
           3'b000: bios_rom_ce_n_o = '0;
-          3'b001, 3'b010, 3'b011: ram_ce_n_o     = '0;	// 2000 - 7fff = 24k
+          3'b001,
+			 3'b010,
+			 3'b011: ram_ce_n_o     = '0;	// 2000 - 7fff = 24k
             default: begin
             end
           endcase
+			 
         end
         else if (lower_mem == 2'b10) begin // RAM expansion
           lowerexpansion_ram_ce_n_o     = '0;
@@ -144,6 +149,7 @@ module cv_addr_dec
              writer_rom_ce_n_o ='0;
         end
         end
+		  
         if (a_i[15])
         begin
 
@@ -155,6 +161,9 @@ module cv_addr_dec
         end
         else if (upper_mem == 2'b00) begin // 32k RAM
               upper_ram_ce_n_o ='0;
+        end
+		  else if (upper_mem == 2'b11) begin // ROM Cartridge (expansion rom at the moment)
+            cartridge_rom_ce_n_o='0;
         end
         end
     end
@@ -183,9 +192,11 @@ module cv_addr_dec
   always @(negedge reset_n_i, posedge clk_i) begin : m_adam
     if (~reset_n_i) begin
       lower_mem_adam     <= mode ? 2'b11 : 2'b00;  // computer mode
-      upper_mem_adam     <= mode ? 2'b01 : 2'b00;
+      upper_mem_adam     <= mode ? 2'b11 : 2'b00;
     end else begin
-      if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:0] == 8'h7f))
+      //if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:0] == 8'h7f))
+		if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:5] == 3'b011))
+
       begin
                 $display("D CHANGING MEM 7F lower %x upper %x",d_i[1:0],d_i[3:2]);
               lower_mem_adam <= d_i[1:0];

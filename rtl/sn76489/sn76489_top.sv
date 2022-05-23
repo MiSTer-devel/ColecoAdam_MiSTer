@@ -70,7 +70,7 @@ module sn76489_top
    input        we_n_i,
    output       ready_o,
    input [0:7]  d_i,
-   output [0:7] aout_o
+   output [0:9] aout_o
    );
 
   logic         clk_en_s;
