@@ -5,7 +5,6 @@ This core is a conversion of the Colecovision core into verilog. Adam support wa
 
 ### Supported Filetypes
  * .col/.bin/.rom files for Coleco system
- * .sg files for SG-1000 system
  * DSK - Coleco Adam disks in various formats
  * DDP - Coleco Adam Data Packs
 
