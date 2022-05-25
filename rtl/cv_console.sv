@@ -151,7 +151,7 @@ module cv_console
    output                       vblank_o,
    output                       comp_sync_n_o,
    // Audio Interface --------------------------------------------------------
-   output [10:0]                audio_o,
+   output [13:0]                audio_o,
 
    // Disk interface
    input [TOT_DISKS-1:0]        disk_present,
@@ -203,8 +203,8 @@ module cv_console
   logic          vdp_int_n_s;
 
   // SN76489 signal
-  logic          psg_ready_s;
-  logic [7:0]    psg_audio_s;
+  logic           psg_ready_s;
+  logic [13:0]    psg_audio_s;
 
   logic [9:0]    audio_mix;
 
@@ -246,7 +246,7 @@ module cv_console
   end
 
   assign vdd_s   = '1;
-  assign audio_o = {psg_audio_s,1'b0};
+  assign audio_o = {psg_audio_s};
 
   assign int_n_s =  ctrl_int_n_s;
   assign nmi_n_s =  vdp_int_n_s;
@@ -400,16 +400,29 @@ module cv_console
   //---------------------------------------------------------------------------
   // SN76489 Programmable Sound Generator
   //---------------------------------------------------------------------------
-  sn76489_top #(.clock_div_16_g(1)) psg_b(
-                                          .clock_i(clk_i),
-                                          .clock_en_i(clk_en_3m58_p_s),
-                                          .res_n_i(reset_n_s),
+//  sn76489_top #(.clock_div_16_g(1)) psg_b(
+//                                          .clock_i(clk_i),
+//                                          .clock_en_i(clk_en_3m58_p_s),
+//                                          .res_n_i(reset_n_s),
+//                                          .ce_n_i(psg_we_n_s),
+//                                          .we_n_i(psg_we_n_s),
+//                                          .ready_o(psg_ready_s),
+//                                          .d_i(d_from_cpu_s),
+//                                          .aout_o(psg_audio_s)
+//                                          );
+
+ sn76489_audio #(.FAST_IO_G(1'b0),.MIN_PERIOD_CNT_G(17)) psg_b(
+                                          .clk_i(clk_i),
+                                          .en_clk_psg_i(clk_en_3m58_n_s),
                                           .ce_n_i(psg_we_n_s),
-                                          .we_n_i(psg_we_n_s),
+                                          .wr_n_i(psg_we_n_s),
                                           .ready_o(psg_ready_s),
-                                          .d_i(d_from_cpu_s),
-                                          .aout_o(psg_audio_s)
+                                          .data_i(d_from_cpu_s),
+														.mix_audio_o(psg_audio_s)
+                                          //.pcm14s_o(psg_audio_s)
                                           );
+ 
+
   //---------------------------------------------------------------------------
   // Controller ports
   //---------------------------------------------------------------------------
