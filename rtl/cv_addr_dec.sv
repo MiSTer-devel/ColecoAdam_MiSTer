@@ -73,7 +73,9 @@ module cv_addr_dec
 	output logic       vdp_r_n_o,
    output logic       vdp_w_n_o,
    output logic       psg_we_n_o,
-
+   output logic       ay_addr_we_n_o,
+   output logic       ay_data_we_n_o,
+   output logic       ay_data_rd_n_o,
    output logic       adam_reset_pcb_n_o,
    output logic       ctrl_r_n_o,
    output logic       ctrl_en_key_n_o,
@@ -111,6 +113,9 @@ module cv_addr_dec
     vdp_r_n_o          = '1;
     vdp_w_n_o          = '1;
     psg_we_n_o         = '1;
+	 ay_addr_we_n_o     = '1;
+    ay_data_we_n_o     = '1;
+    ay_data_rd_n_o     = '1;
     adam_reset_pcb_n_o = '1;
     ctrl_r_n_o         = '1;
     ctrl_en_key_n_o    = '1;
@@ -182,7 +187,10 @@ module cv_addr_dec
             end
         endcase
       end
-
+		
+      if      (a_i[7:0] == 8'h50 && ~wr_n_i) ay_addr_we_n_o = '0;
+      else if (a_i[7:0] == 8'h51 && ~wr_n_i) ay_data_we_n_o = '0;
+      else if (a_i[7:0] == 8'h52 && ~rd_n_i) ay_data_rd_n_o = '0;
       else if (a_i[7:0] == 8'h3f && ~wr_n_i && d_i==8'h0F) adam_reset_pcb_n_o = '0;
     end
   end

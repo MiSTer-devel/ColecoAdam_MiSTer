@@ -1,5 +1,5 @@
 //============================================================================
-//  ColecoVision
+//  ColecoAdam
 //
 //  Port to MiSTer
 //  Copyright (C) 2017-2019 Sorgelig
@@ -214,7 +214,6 @@ parameter CONF_STR = {
         "Adam;;",
         "-;",
         "F,COLBINROM,Load CART;",
-        "F,COLBINROM,Load Ext. ROM;",
         "S0,DSK,Load Floppy 1;",
         "S1,DSK,Load Floppy 2;",
         "S2,DSK,Load Floppy 3;",
@@ -232,7 +231,6 @@ parameter CONF_STR = {
         "-;",
         "O3,Joysticks swap,No,Yes;",
         "-;",
-        "O45,RAM Size,1KB,8KB,SGM;",
         "OC,Mode,Computer,Console;",
         "R0,Reset;",
         "J,Fire 1,Fire 2,*,#,0,1,2,3,4,5,6,7,8,9,Purple Tr,Blue Tr;",
@@ -479,23 +477,13 @@ spramv #(15) rom_cartridge
      );
 
 wire [19:0] ext_rom_a;
-wire  [7:0] ext_rom_d;
-
-spramv #(15) extended_rom
-    (
-     .clock(clk_sys),
-     .address((ioctl_download && ioctl_index[4:0] == 2) ? ioctl_addr : ext_rom_a),
-     .wren(ioctl_wr),
-     .data(ioctl_dout),
-     .q(ext_rom_d),
-     .cs(1'b1)
-     );
+wire  [7:0] ext_rom_d=8'hff;
 
 ////////////////  Console  ////////////////////////
 
 wire [13:0] audio;
-assign AUDIO_L = {audio,2'd0};
-assign AUDIO_R = {audio,2'd0};
+assign AUDIO_L = {1'b0,audio,1'd0};
+assign AUDIO_R = {1'b0,audio,1'd0};
 assign AUDIO_S = 0;
 assign AUDIO_MIX = 0;
 

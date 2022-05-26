@@ -9,6 +9,7 @@ set_global_assignment -name VERILOG_FILE rtl/tv80/tv80e.v
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv
 set_global_assignment -name VHDL_FILE rtl/bram.vhd
 set_global_assignment -name VHDL_FILE rtl/sn76489_audio.vhd
+set_global_assignment -name VHDL_FILE rtl/ym2149_audio.vhd
 set_global_assignment -name VERILOG_FILE rtl/rom.v
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/spram.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/dpramv.sv
