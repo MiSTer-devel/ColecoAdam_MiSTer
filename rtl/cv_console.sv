@@ -134,6 +134,8 @@ module cv_console
    // Cartridge ROM Interface ------------------------------------------------
    output [19:0]                cart_a_o,
    input [7:0]                  cart_d_i,
+	output                       cart_rd,
+	input [5:0]                  cart_pages_i,
    // extended ROM Interface ------------------------------------------------
    output [19:0]                ext_rom_a_o,
    input [7:0]                  ext_rom_d_i,
@@ -235,6 +237,7 @@ module cv_console
   logic          ctrl_r_n_s;
   logic          ctrl_en_key_n_s;
   logic          ctrl_en_joy_n_s;
+  logic [5:0]    cart_page_s;
   
   // misc signals
   logic          vdd_s;
@@ -464,6 +467,8 @@ module cv_console
 								 .mode(mode),
                          .a_i(a_s),
                          .d_i(d_from_cpu_s),
+								 .cart_pages_i(cart_pages_i),
+                         .cart_page_o(cart_page_s),
                          .iorq_n_i(iorq_n_s),
                          .rd_n_i(rd_n_s),
                          .wr_n_i(wr_n_s),
@@ -487,7 +492,7 @@ module cv_console
                          .adam_reset_pcb_n_o(adam_reset_pcb_n_s),
                          .ctrl_r_n_o(ctrl_r_n_s),
                          .ctrl_en_key_n_o(ctrl_en_key_n_s),
-                         .ctrl_en_joy_n_o(ctrl_en_joy_n_s),
+                         .ctrl_en_joy_n_o(ctrl_en_joy_n_s)
 								 );
 
   reg wr_z80;
@@ -577,6 +582,8 @@ module cv_console
   assign cpu_ram_rd_n_o = rd_n_s;
   assign cpu_lowerexpansion_ram_rd_n_o = rd_n_s;
   assign cpu_upper_ram_rd_n_o = rd_n_s;
+  assign cart_rd = ~cartridge_rom_ce_n_s;
+  
   //---------------------------------------------------------------------------
   // Bus multiplexer
   //---------------------------------------------------------------------------
@@ -698,6 +705,6 @@ end
   assign cpu_ram_d_o       = d_from_cpu_s;
   assign cpu_lowerexpansion_ram_d_o       = d_from_cpu_s;
   assign cpu_upper_ram_d_o = d_from_cpu_s;
-  assign cart_a_o ={4'b0000, a_s[15:0]};
+  assign cart_a_o ={cart_page_s, a_s[13:0]};
 
 endmodule

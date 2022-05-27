@@ -463,18 +463,31 @@ spramv #(14) vram
         .q(vram_di)
 );
 
+
 wire [19:0] cart_a;
 wire  [7:0] cart_d;
+wire        cart_rd;
 
-spramv #(15) rom_cartridge
-    (
-     .clock(clk_sys),
-     .address((ioctl_download && ioctl_index[4:0]==1)? ioctl_addr : cart_a),
-     .wren(ioctl_wr),
-     .data(ioctl_dout),
-     .q(cart_d),
-     .cs(1'b1)
-     );
+reg [5:0] cart_pages = 6'b0;
+
+always @(posedge clk_sys) if(ioctl_wr) cart_pages <= ioctl_addr[19:14];
+
+assign SDRAM_CLK = ~clk_sys;
+sdram sdram
+(
+   .*,
+   .init(~pll_locked),
+   .clk(clk_sys),
+
+   .wtbt(0),
+   .addr(ioctl_download ? ioctl_addr : cart_a),
+   .rd(cart_rd),
+   .dout(cart_d),
+   .din(ioctl_dout),
+   .we(ioctl_wr),
+   .ready()
+);
+
 
 wire [19:0] ext_rom_a;
 wire  [7:0] ext_rom_d=8'hff;
@@ -585,9 +598,11 @@ cv_console
         .vram_d_o(vram_do),
         .vram_d_i(vram_di),
 
+        .cart_pages_i(cart_pages),
         .cart_a_o(cart_a),
         .cart_d_i(cart_d),
-		  
+        .cart_rd(cart_rd),
+
 		  .ext_rom_a_o(ext_rom_a),
 		  .ext_rom_d_i(ext_rom_d),
 
