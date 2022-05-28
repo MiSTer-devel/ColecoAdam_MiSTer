@@ -46,53 +46,51 @@
 //
 //-----------------------------------------------------------------------------
 
-module cv_addr_dec
-  (
-   input              clk_i,
-   input              reset_n_i,
-   input              adam,
-	input              mode,
-   input [15:0]       a_i,
-   input [7:0]        d_i,
-   input [5:0]        cart_pages_i,
-   output logic [5:0] cart_page_o,
-   input              iorq_n_i,
-   input              rd_n_i,
-   input              wr_n_i,
-   input              mreq_n_i,
-   input              rfsh_n_i,
-   output logic       bios_rom_ce_n_o,
-   output logic       eos_rom_ce_n_o,
-   output logic       writer_rom_ce_n_o,
-   output logic       ram_ce_n_o,
-   output logic       lowerexpansion_ram_ce_n_o,
-   output logic       upper_ram_ce_n_o,
-   output logic       expansion_ram_ce_n_o,
-   output logic       expansion_rom_ce_n_o,
-	output logic       cartridge_rom_ce_n_o,
-	output logic       vdp_r_n_o,
-   output logic       vdp_w_n_o,
-   output logic       psg_we_n_o,
-   output logic       ay_addr_we_n_o,
-   output logic       ay_data_we_n_o,
-   output logic       ay_data_rd_n_o,
-   output logic       adam_reset_pcb_n_o,
-   output logic       ctrl_r_n_o,
-   output logic       ctrl_en_key_n_o,
-   output logic       ctrl_en_joy_n_o
-   );
+module cv_addr_dec (
+    input               clk_i,
+    input               reset_n_i,
+    input               mode,
+    input        [15:0] a_i,
+    input        [ 7:0] d_i,
+    input        [ 5:0] cart_pages_i,
+    output logic [ 5:0] cart_page_o,
+    input               iorq_n_i,
+    input               rd_n_i,
+    input               wr_n_i,
+    input               mreq_n_i,
+    input               rfsh_n_i,
+    output logic        bios_rom_ce_n_o,
+    output logic        eos_rom_ce_n_o,
+    output logic        writer_rom_ce_n_o,
+    output logic        ram_ce_n_o,
+    output logic        lowerexpansion_ram_ce_n_o,
+    output logic        upper_ram_ce_n_o,
+    output logic        expansion_ram_ce_n_o,
+    output logic        expansion_rom_ce_n_o,
+    output logic        cartridge_rom_ce_n_o,
+    output logic        vdp_r_n_o,
+    output logic        vdp_w_n_o,
+    output logic        psg_we_n_o,
+    output logic        ay_addr_we_n_o,
+    output logic        ay_data_we_n_o,
+    output logic        ay_data_rd_n_o,
+    output logic        adam_reset_pcb_n_o,
+    output logic        ctrl_r_n_o,
+    output logic        ctrl_en_key_n_o,
+    output logic        ctrl_en_joy_n_o
+);
 
-  logic               megacart_en;
-  logic [5:0]         megacart_page;
-  logic               bios_en;
-  logic               eos_en;
-  logic               last_35_reset_bit;
-  logic [1:0]         lower_mem_adam;
-  logic [1:0]         upper_mem_adam;
-  logic [1:0]         lower_mem_nadam;
-  logic [1:0]         upper_mem_nadam;
-  logic [1:0]         lower_mem;
-  logic [1:0]         upper_mem;
+  logic       megacart_en;
+  logic [5:0] megacart_page;
+ // logic       bios_en;
+  logic       eos_en;
+  logic       last_35_reset_bit;
+  logic [1:0] lower_mem_adam;
+  logic [1:0] upper_mem_adam;
+  logic [1:0] lower_mem_nadam;
+  logic [1:0] upper_mem_nadam;
+  logic [1:0] lower_mem;
+  logic [1:0] upper_mem;
   //---------------------------------------------------------------------------
   // Process dec
   //
@@ -101,26 +99,26 @@ module cv_addr_dec
   //
   always_comb begin : dec
     // default assignments
-    bios_rom_ce_n_o    = '1;
-    eos_rom_ce_n_o     = '1;
-    writer_rom_ce_n_o  = '1;
-    eos_rom_ce_n_o     = '1;
-    ram_ce_n_o         = '1;
-    lowerexpansion_ram_ce_n_o         = '1;
-    upper_ram_ce_n_o   = '1;
-    expansion_ram_ce_n_o='1;
-    expansion_rom_ce_n_o='1;
-    cartridge_rom_ce_n_o='1;
-    vdp_r_n_o          = '1;
-    vdp_w_n_o          = '1;
-    psg_we_n_o         = '1;
-	 ay_addr_we_n_o     = '1;
-    ay_data_we_n_o     = '1;
-    ay_data_rd_n_o     = '1;
+    bios_rom_ce_n_o = '1;
+    eos_rom_ce_n_o = '1;
+    writer_rom_ce_n_o = '1;
+    eos_rom_ce_n_o = '1;
+    ram_ce_n_o = '1;
+    lowerexpansion_ram_ce_n_o = '1;
+    upper_ram_ce_n_o = '1;
+    expansion_ram_ce_n_o = '1;
+    expansion_rom_ce_n_o = '1;
+    cartridge_rom_ce_n_o = '1;
+    vdp_r_n_o = '1;
+    vdp_w_n_o = '1;
+    psg_we_n_o = '1;
+    ay_addr_we_n_o = '1;
+    ay_data_we_n_o = '1;
+    ay_data_rd_n_o = '1;
     adam_reset_pcb_n_o = '1;
-    ctrl_r_n_o         = '1;
-    ctrl_en_key_n_o    = '1;
-    ctrl_en_joy_n_o    = '1;
+    ctrl_r_n_o = '1;
+    ctrl_en_key_n_o = '1;
+    ctrl_en_joy_n_o = '1;
 
 
     megacart_en = (cart_pages_i == 6'b000011 |
@@ -133,87 +131,74 @@ module cv_addr_dec
     case (a_i[15:14])
       2'b10: begin
         if (megacart_en) cart_page_o = cart_pages_i;
-        else             cart_page_o = '0;
+        else cart_page_o = '0;
       end
       2'b11: begin
         if (megacart_en) cart_page_o = megacart_page;
-        else             cart_page_o = 6'b000001;
+        else cart_page_o = 6'b000001;
       end
-      default:           cart_page_o = 6'b000000;
+      default: cart_page_o = 6'b000000;
     endcase
- 
+
     // Memory access ----------------------------------------------------------
     if (~mreq_n_i && rfsh_n_i) begin
 
-//      end else begin
-        if (~a_i[15])
-        begin
+      //      end else begin
+      if (~a_i[15]) begin
         if (lower_mem == 2'b11) begin  // OS7 / 24k RAM
           case (a_i[15:13])
-          3'b000: bios_rom_ce_n_o = '0;
-          3'b001,
-			 3'b010,
-			 3'b011: ram_ce_n_o      = '0; // 2000 - 7fff = 24k
-			 3'b100,
-			 3'b101,
-			 3'b110,
-			 3'b111: cartridge_rom_ce_n_o = '0;
+            3'b000:                         bios_rom_ce_n_o = '0;
+            3'b001, 3'b010, 3'b011:         ram_ce_n_o = '0;  // 2000 - 7fff = 24k
+            3'b100, 3'b101, 3'b110, 3'b111: cartridge_rom_ce_n_o = '0;
             default: begin
             end
           endcase
-			 
-        end
-        else if (lower_mem == 2'b10) begin // RAM expansion
-          lowerexpansion_ram_ce_n_o     = '0;
-        end
-        else if (lower_mem == 2'b01) begin // 32K of RAM
-          ram_ce_n_o     = '0;	// 2000 - 7fff = 24k
-        end
-        else if (lower_mem == 2'b00) begin // WRITER ROM (when do we use EOS?)
-          if (eos_en)
-             eos_rom_ce_n_o ='0;
-          else
-             writer_rom_ce_n_o ='0;
-        end
-        end
-		  
-        if (a_i[15])
-        begin
 
-        if (upper_mem == 2'b10) begin // RAM expansion
-            expansion_ram_ce_n_o='0;
+        end else if (lower_mem == 2'b10) begin  // RAM expansion
+          lowerexpansion_ram_ce_n_o = '0;
+        end else if (lower_mem == 2'b01) begin  // 32K of RAM
+          ram_ce_n_o = '0;  // 2000 - 7fff = 24k
+        end else if (lower_mem == 2'b00) begin  // WRITER ROM (when do we use EOS?)
+          if (eos_en) eos_rom_ce_n_o = '0;
+          else writer_rom_ce_n_o = '0;
         end
-        else if (upper_mem == 2'b01) begin // ROM expansion
-            expansion_rom_ce_n_o='0;
+      end
+
+      if (a_i[15]) begin
+
+        if (upper_mem == 2'b10) begin  // RAM expansion
+          expansion_ram_ce_n_o = '0;
+        end else if (upper_mem == 2'b01) begin  // ROM expansion
+          expansion_rom_ce_n_o = '0;
+        end else if (upper_mem == 2'b00) begin  // 32k RAM
+          upper_ram_ce_n_o = '0;
+        end else if (upper_mem == 2'b11) begin  // ROM Cartridge
+          cartridge_rom_ce_n_o = '0;
         end
-        else if (upper_mem == 2'b00) begin // 32k RAM
-              upper_ram_ce_n_o ='0;
-        end
-		  else if (upper_mem == 2'b11) begin // ROM Cartridge
-            cartridge_rom_ce_n_o='0;
-        end
-        end
+      end
     end
 
     // I/O access -------------------------------------------------------------
     if (~iorq_n_i) begin
       if (a_i[7]) begin
-        case ({a_i[6], a_i[5], wr_n_i})
+        case ({
+          a_i[6], a_i[5], wr_n_i
+        })
           3'b000: ctrl_en_key_n_o = '0;
           3'b010: vdp_w_n_o = '0;
           3'b011: if (~rd_n_i) vdp_r_n_o = '0;
           3'b100: ctrl_en_joy_n_o = '0;
           3'b110: psg_we_n_o = '0;
           3'b111: if (~rd_n_i) ctrl_r_n_o = '0;
-            default: begin
-            end
+          default: begin
+          end
         endcase
       end
-		
-      if      (a_i[7:0] == 8'h50 && ~wr_n_i) ay_addr_we_n_o = '0;
+
+      if (a_i[7:0] == 8'h50 && ~wr_n_i) ay_addr_we_n_o = '0;
       else if (a_i[7:0] == 8'h51 && ~wr_n_i) ay_data_we_n_o = '0;
       else if (a_i[7:0] == 8'h52 && ~rd_n_i) ay_data_rd_n_o = '0;
-      else if (a_i[7:0] == 8'h3f && ~wr_n_i && d_i==8'h0F) adam_reset_pcb_n_o = '0;
+      else if (a_i[7:0] == 8'h3f && ~wr_n_i && d_i == 8'h0F) adam_reset_pcb_n_o = '0;
     end
   end
 
@@ -221,49 +206,50 @@ module cv_addr_dec
   //---------------------------------------------------------------------------
   always @(negedge reset_n_i, posedge clk_i) begin : m_adam
     if (~reset_n_i) begin
-      lower_mem_adam     <= mode ? 2'b11 : 2'b00;  // computer mode
-      upper_mem_adam     <= mode ? 2'b11 : 2'b00;
+      lower_mem_adam <= mode ? 2'b11 : 2'b00;  // computer mode
+      upper_mem_adam <= mode ? 2'b11 : 2'b00;
     end else begin
-      //if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:0] == 8'h7f))
-		if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:5] == 3'b011))
-
-      begin
-                $display("D CHANGING MEM 7F lower %x upper %x",d_i[1:0],d_i[3:2]);
-              lower_mem_adam <= d_i[1:0];
-              upper_mem_adam <= d_i[3:2];
+      if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:0] == 8'h7f)) begin
+        $display("D CHANGING MEM 7F lower %x upper %x", d_i[1:0], d_i[3:2]);
+        lower_mem_adam <= d_i[1:0];
+        upper_mem_adam <= d_i[3:2];
+      end else
+		  if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:0] == 8'h3f)) begin
+        $display("B SETTING MEMORY MODE 3F? addr %x data %x", a_i, d_i);
+        last_35_reset_bit <= d_i[0];
+        eos_en <= d_i[1];
       end
+
     end
   end
 
 
-  assign lower_mem =  lower_mem_adam ;
-  assign upper_mem =   upper_mem_adam;
+  assign lower_mem = lower_mem_adam;
+  assign upper_mem = upper_mem_adam;
 
   always @(negedge reset_n_i, posedge clk_i) begin : megacart
     if (~reset_n_i) begin
-	   megacart_page <= '0;
-      bios_en       <= '1;
+      megacart_page     <= '0;
+      //bios_en           <= '1;
       last_35_reset_bit <= '0;
-      eos_en       <= '0;
+      //eos_en            <= '0;
     end else begin
-	 // MegaCart paging
+      // MegaCart paging
       if (megacart_en && rfsh_n_i && ~mreq_n_i && ~rd_n_i && (a_i[15:6] == {8'hFF, 2'b11}))
-         megacart_page <= a_i[5:0] & cart_pages_i;
-			
-		  
-     if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:0] == 8'h7f))
-      begin
-        bios_en <= d_i[1];
-              $display("A SETTING MEMORY MODE 7F? %x",a_i,d_i);
-      end
+        megacart_page <= a_i[5:0] & cart_pages_i;
 
-        // just 3F or all addresses?
-      if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:0] == 8'h3f))
-      begin
-              $display("B SETTING MEMORY MODE 3F? addr %x data %x",a_i,d_i);
-        last_35_reset_bit <= d_i[0];
-        eos_en <= d_i[1];
-      end
+
+//      if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:0] == 8'h7f)) begin
+//        bios_en <= d_i[1];
+//        $display("A SETTING MEMORY MODE 7F? %x", a_i, d_i);
+//      end
+
+      // just 3F or all addresses?
+//      if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:0] == 8'h3f)) begin
+//        $display("B SETTING MEMORY MODE 3F? addr %x data %x", a_i, d_i);
+//        last_35_reset_bit <= d_i[0];
+//        eos_en <= d_i[1];
+//      end
     end
   end
 

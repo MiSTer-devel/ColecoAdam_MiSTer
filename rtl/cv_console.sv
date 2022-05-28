@@ -72,7 +72,6 @@ module cv_console
    input                        clk_i,
    input                        clk_en_10m7_i,
    input                        reset_n_i,
-   input                        adam,
 	input                        mode,
    output logic                 por_n_o,
    // Controller Interface ---------------------------------------------------
@@ -463,7 +462,6 @@ module cv_console
   cv_addr_dec addr_dec_b(
                          .clk_i(clk_i),
                          .reset_n_i(reset_n_i),
-                         .adam(adam),
 								 .mode(mode),
                          .a_i(a_s),
                          .d_i(d_from_cpu_s),
@@ -637,7 +635,9 @@ module cv_console
     if (~ctrl_r_n_s)            d_ctrl_v = d_to_ctrl_s;
 	 if (~ay_data_rd_n_s)        d_ay_v   = ay_d_s;
 
-    d_to_cpu_s = d_bios_v & d_eos_v & d_writer_v & d_ram_v & d_upper_ram_v & d_expansion_rom_v & d_cartridge_rom_v & d_vdp_v & d_ctrl_v & d_lowerexpansion_ram_v & d_ay_v;
+    d_to_cpu_s = d_bios_v & d_eos_v & d_writer_v & d_ram_v & d_upper_ram_v 
+	            & d_expansion_rom_v & d_cartridge_rom_v & d_vdp_v 
+					& d_ctrl_v & d_lowerexpansion_ram_v & d_ay_v;
   end
 
 

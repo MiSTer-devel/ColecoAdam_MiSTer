@@ -317,15 +317,28 @@ hps_io #(.CONF_STR(CONF_STR), .VDNUM(TOT_DISKS)) hps_io
    .ioctl_wr(ioctl_wr),
    .ioctl_addr(ioctl_addr),
    .ioctl_dout(ioctl_dout),
-        .ps2_key(ps2_key),
+   .ps2_key(ps2_key),
+	
 
    .joystick_0(joy0),
    .joystick_1(joy1)
 );
 
+
+
+
+
+
+
 /////////////////  RESET  /////////////////////////
 
-wire reset = RESET | status[0] | buttons[1] | ioctl_download;
+reg old_mode;
+
+always @(posedge clk_sys) begin
+	old_mode <= mode ;
+end
+
+wire reset = RESET | status[0] | buttons[1] | old_mode != mode | ioctl_download;
 
 /////////////////  Memory  ////////////////////////
 
@@ -339,7 +352,8 @@ spram #(13,8,"rtl/bios.mif") rom0
         .address(bios_a),
         .q(bios_d)
 );
-`endif
+`else
+
 rom #(.AW(13),.DW(8),.FN("rtl/bios.hex")) rom1
 (
         .clock(clk_sys),
@@ -347,6 +361,9 @@ rom #(.AW(13),.DW(8),.FN("rtl/bios.hex")) rom1
         .enable(1'b1),
         .q(bios_d)
 );
+
+`endif
+
 
 wire [14:0] writer_a;
 wire  [7:0] writer_d;
@@ -469,8 +486,8 @@ wire  [7:0] cart_d;
 wire        cart_rd;
 
 reg [5:0] cart_pages = 6'b0;
+always @(posedge clk_sys) if(ioctl_download) cart_pages <= ioctl_addr[19:14];
 
-always @(posedge clk_sys) if(ioctl_wr) cart_pages <= ioctl_addr[19:14];
 
 assign SDRAM_CLK = ~clk_sys;
 sdram sdram
@@ -545,7 +562,6 @@ cv_console
         .clk_en_10m7_i(ce_10m7),
         .reset_n_i(~reset),
         .por_n_o(),
-        .adam(1'b1),
         .mode(~mode),
         .ctrl_p1_i(ctrl_p1),
         .ctrl_p2_i(ctrl_p2),

@@ -165,6 +165,10 @@ port
    ; bdir_i             : in     std_logic -- bus direction
    ; data_i             : in     std_logic_vector(7 downto 0)
    ; data_r_o           : out    std_logic_vector(7 downto 0) -- registered output data
+	; io_a_i             : in     std_logic_vector(7 downto 0)
+	; io_b_i             : in     std_logic_vector(7 downto 0)
+	; io_a_o             : out    std_logic_vector(7 downto 0)
+	; io_b_o             : out    std_logic_vector(7 downto 0)
    ; ch_a_o             : out    unsigned(11 downto 0)
    ; ch_b_o             : out    unsigned(11 downto 0)
    ; ch_c_o             : out    unsigned(11 downto 0)
@@ -374,6 +378,9 @@ architecture rtl of ym2149_audio is
 
    signal pcm14s_r            : unsigned(13 downto 0) := (others => '0');
 
+	signal port_a_s            : std_logic_vector(7 downto 0) := (others => 'Z');
+	signal port_b_s            : std_logic_vector(7 downto 0) := (others => 'Z');
+
 begin
 
    -- Register the input data at the full clock rate.
@@ -508,6 +515,9 @@ begin
          reg_file_ar(13) <= x"00";
          reg_file_ar(14) <= x"00";
          reg_file_ar(15) <= x"00";
+			
+			port_a_s        <= x"00";
+			port_b_s        <= x"00";
 
       elsif en_clk_psg_i = '1' then
 
@@ -554,9 +564,14 @@ begin
    env_alternate_s   <= reg_file_ar(13)(1);
    env_hold_s        <= reg_file_ar(13)(0);
 
-   -- TODO implement I/O registers.
+   -- I/O registers.
 
-
+   port_a_s          <= (reg_file_ar(14) and io_a_i) when reg_file_ar(7)(6) = '1' else io_a_i;
+	port_b_s          <= (reg_file_ar(15) and io_b_i) when reg_file_ar(7)(7) = '1' else io_b_i;
+	
+	io_a_o            <= reg_file_ar(14);
+   io_b_o            <= reg_file_ar(15);
+	
    -- -----------------------------------------------------------------------
    --
    -- Clock conditioning.
