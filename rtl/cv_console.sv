@@ -72,7 +72,6 @@ module cv_console
    input                        clk_i,
    input                        clk_en_10m7_i,
    input                        reset_n_i,
-   input                        adam,
 	input                        mode,
    output logic                 por_n_o,
    // Controller Interface ---------------------------------------------------
@@ -134,6 +133,8 @@ module cv_console
    // Cartridge ROM Interface ------------------------------------------------
    output [19:0]                cart_a_o,
    input [7:0]                  cart_d_i,
+	output                       cart_rd,
+	input [5:0]                  cart_pages_i,
    // extended ROM Interface ------------------------------------------------
    output [19:0]                ext_rom_a_o,
    input [7:0]                  ext_rom_d_i,
@@ -151,7 +152,7 @@ module cv_console
    output                       vblank_o,
    output                       comp_sync_n_o,
    // Audio Interface --------------------------------------------------------
-   output [10:0]                audio_o,
+   output [13:0]                audio_o,
 
    // Disk interface
    input [TOT_DISKS-1:0]        disk_present,
@@ -203,11 +204,13 @@ module cv_console
   logic          vdp_int_n_s;
 
   // SN76489 signal
-  logic          psg_ready_s;
-  logic [7:0]    psg_audio_s;
-
-  logic [9:0]    audio_mix;
-
+  logic           psg_ready_s;
+  logic [13:0]    psg_a_audio_s;
+  
+  // AY-8910 signal
+  logic [7:0]    ay_d_s;
+  logic [13:0]   psg_b_audio_s;
+  
   // Controller signals
   logic [7:0]    d_from_ctrl_s;
   logic [7:0]    d_to_ctrl_s;
@@ -233,6 +236,7 @@ module cv_console
   logic          ctrl_r_n_s;
   logic          ctrl_en_key_n_s;
   logic          ctrl_en_joy_n_s;
+  logic [5:0]    cart_page_s;
   
   // misc signals
   logic          vdd_s;
@@ -246,7 +250,7 @@ module cv_console
   end
 
   assign vdd_s   = '1;
-  assign audio_o = {psg_audio_s,1'b0};
+  assign audio_o = psg_a_audio_s + psg_b_audio_s;
 
   assign int_n_s =  ctrl_int_n_s;
   assign nmi_n_s =  vdp_int_n_s;
@@ -400,16 +404,33 @@ module cv_console
   //---------------------------------------------------------------------------
   // SN76489 Programmable Sound Generator
   //---------------------------------------------------------------------------
-  sn76489_top #(.clock_div_16_g(1)) psg_b(
-                                          .clock_i(clk_i),
-                                          .clock_en_i(clk_en_3m58_p_s),
-                                          .res_n_i(reset_n_s),
+
+
+ sn76489_audio #(.FAST_IO_G(1'b0),.MIN_PERIOD_CNT_G(17)) psg_a(
+                                          .clk_i(clk_i),
+                                          .en_clk_psg_i(clk_en_3m58_n_s),
                                           .ce_n_i(psg_we_n_s),
-                                          .we_n_i(psg_we_n_s),
+                                          .wr_n_i(psg_we_n_s),
                                           .ready_o(psg_ready_s),
-                                          .d_i(d_from_cpu_s),
-                                          .aout_o(psg_audio_s)
+                                          .data_i(d_from_cpu_s),
+														.mix_audio_o(psg_a_audio_s)
+                                          //.pcm14s_o(psg_audio_s)
                                           );
+														
+ 
+ ym2149_audio psg_b(
+                     .clk_i(clk_i),
+                     .en_clk_psg_i(clk_en_3m58_p_s),
+                     .reset_n_i((reset_n_s)),
+                     .bdir_i((~ay_addr_we_n_s) | (~ay_data_we_n_s)),
+                     .bc_i((~ay_addr_we_n_s) | (~ay_data_rd_n_s)),
+                     .data_i(d_from_cpu_s),
+                     .data_r_o(ay_d_s),
+                     .sel_n_i(1'b0),
+							.mix_audio_o(psg_b_audio_s)
+                     );
+
+
   //---------------------------------------------------------------------------
   // Controller ports
   //---------------------------------------------------------------------------
@@ -441,10 +462,11 @@ module cv_console
   cv_addr_dec addr_dec_b(
                          .clk_i(clk_i),
                          .reset_n_i(reset_n_i),
-                         .adam(adam),
 								 .mode(mode),
                          .a_i(a_s),
                          .d_i(d_from_cpu_s),
+								 .cart_pages_i(cart_pages_i),
+                         .cart_page_o(cart_page_s),
                          .iorq_n_i(iorq_n_s),
                          .rd_n_i(rd_n_s),
                          .wr_n_i(wr_n_s),
@@ -462,11 +484,14 @@ module cv_console
                          .vdp_r_n_o(vdp_r_n_s),
                          .vdp_w_n_o(vdp_w_n_s),
                          .psg_we_n_o(psg_we_n_s),
+								 .ay_addr_we_n_o(ay_addr_we_n_s),
+                         .ay_data_we_n_o(ay_data_we_n_s),
+                         .ay_data_rd_n_o(ay_data_rd_n_s),
                          .adam_reset_pcb_n_o(adam_reset_pcb_n_s),
                          .ctrl_r_n_o(ctrl_r_n_s),
                          .ctrl_en_key_n_o(ctrl_en_key_n_s),
                          .ctrl_en_joy_n_o(ctrl_en_joy_n_s)
-                         );
+								 );
 
   reg wr_z80;
   reg rd_z80;
@@ -555,6 +580,8 @@ module cv_console
   assign cpu_ram_rd_n_o = rd_n_s;
   assign cpu_lowerexpansion_ram_rd_n_o = rd_n_s;
   assign cpu_upper_ram_rd_n_o = rd_n_s;
+  assign cart_rd = ~cartridge_rom_ce_n_s;
+  
   //---------------------------------------------------------------------------
   // Bus multiplexer
   //---------------------------------------------------------------------------
@@ -581,7 +608,7 @@ module cv_console
 	 logic [7:0]        d_cartridge_rom_v;
     logic [7:0]        d_vdp_v;
     logic [7:0]        d_ctrl_v;
-    logic [7:0]        d_ay_v;
+	 logic [7:0]        d_ay_v;
 
     // default assignments
     d_bios_v = '1;
@@ -594,6 +621,7 @@ module cv_console
     d_lowerexpansion_ram_v  = '1;
     d_vdp_v  = '1;
     d_ctrl_v = '1;
+	 d_ay_v   = '1;
  
     if (~bios_rom_ce_n_s)       d_bios_v = bios_rom_d_i;
     if (~eos_rom_ce_n_s)        d_eos_v = eos_rom_d_i;
@@ -605,8 +633,11 @@ module cv_console
     if (~cartridge_rom_ce_n_s)  d_cartridge_rom_v = cart_d_i;
     if (~vdp_r_n_s)             d_vdp_v  = d_from_vdp_s;
     if (~ctrl_r_n_s)            d_ctrl_v = d_to_ctrl_s;
+	 if (~ay_data_rd_n_s)        d_ay_v   = ay_d_s;
 
-    d_to_cpu_s = d_bios_v & d_eos_v & d_writer_v & d_ram_v & d_upper_ram_v & d_expansion_rom_v & d_cartridge_rom_v & d_vdp_v & d_ctrl_v & d_lowerexpansion_ram_v;
+    d_to_cpu_s = d_bios_v & d_eos_v & d_writer_v & d_ram_v & d_upper_ram_v 
+	            & d_expansion_rom_v & d_cartridge_rom_v & d_vdp_v 
+					& d_ctrl_v & d_lowerexpansion_ram_v & d_ay_v;
   end
 
 
@@ -674,6 +705,6 @@ end
   assign cpu_ram_d_o       = d_from_cpu_s;
   assign cpu_lowerexpansion_ram_d_o       = d_from_cpu_s;
   assign cpu_upper_ram_d_o = d_from_cpu_s;
-  assign cart_a_o ={4'b0000, a_s[15:0]};
+  assign cart_a_o ={cart_page_s, a_s[13:0]};
 
 endmodule

@@ -1,5 +1,5 @@
 //============================================================================
-//  ColecoVision
+//  ColecoAdam
 //
 //  Port to MiSTer
 //  Copyright (C) 2017-2019 Sorgelig
@@ -214,7 +214,6 @@ parameter CONF_STR = {
         "Adam;;",
         "-;",
         "F,COLBINROM,Load CART;",
-        "F,COLBINROM,Load Ext. ROM;",
         "S0,DSK,Load Floppy 1;",
         "S1,DSK,Load Floppy 2;",
         "S2,DSK,Load Floppy 3;",
@@ -232,7 +231,6 @@ parameter CONF_STR = {
         "-;",
         "O3,Joysticks swap,No,Yes;",
         "-;",
-        "O45,RAM Size,1KB,8KB,SGM;",
         "OC,Mode,Computer,Console;",
         "R0,Reset;",
         "J,Fire 1,Fire 2,*,#,0,1,2,3,4,5,6,7,8,9,Purple Tr,Blue Tr;",
@@ -319,15 +317,28 @@ hps_io #(.CONF_STR(CONF_STR), .VDNUM(TOT_DISKS)) hps_io
    .ioctl_wr(ioctl_wr),
    .ioctl_addr(ioctl_addr),
    .ioctl_dout(ioctl_dout),
-        .ps2_key(ps2_key),
+   .ps2_key(ps2_key),
+	
 
    .joystick_0(joy0),
    .joystick_1(joy1)
 );
 
+
+
+
+
+
+
 /////////////////  RESET  /////////////////////////
 
-wire reset = RESET | status[0] | buttons[1] | ioctl_download;
+reg old_mode;
+
+always @(posedge clk_sys) begin
+	old_mode <= mode ;
+end
+
+wire reset = RESET | status[0] | buttons[1] | old_mode != mode | ioctl_download;
 
 /////////////////  Memory  ////////////////////////
 
@@ -341,7 +352,8 @@ spram #(13,8,"rtl/bios.mif") rom0
         .address(bios_a),
         .q(bios_d)
 );
-`endif
+`else
+
 rom #(.AW(13),.DW(8),.FN("rtl/bios.hex")) rom1
 (
         .clock(clk_sys),
@@ -349,6 +361,9 @@ rom #(.AW(13),.DW(8),.FN("rtl/bios.hex")) rom1
         .enable(1'b1),
         .q(bios_d)
 );
+
+`endif
+
 
 wire [14:0] writer_a;
 wire  [7:0] writer_d;
@@ -465,37 +480,40 @@ spramv #(14) vram
         .q(vram_di)
 );
 
+
 wire [19:0] cart_a;
 wire  [7:0] cart_d;
+wire        cart_rd;
 
-spramv #(15) rom_cartridge
-    (
-     .clock(clk_sys),
-     .address((ioctl_download && ioctl_index[4:0]==1)? ioctl_addr : cart_a),
-     .wren(ioctl_wr),
-     .data(ioctl_dout),
-     .q(cart_d),
-     .cs(1'b1)
-     );
+reg [5:0] cart_pages = 6'b0;
+always @(posedge clk_sys) if(ioctl_download) cart_pages <= ioctl_addr[19:14];
+
+
+assign SDRAM_CLK = ~clk_sys;
+sdram sdram
+(
+   .*,
+   .init(~pll_locked),
+   .clk(clk_sys),
+
+   .wtbt(0),
+   .addr(ioctl_download ? ioctl_addr : cart_a),
+   .rd(cart_rd),
+   .dout(cart_d),
+   .din(ioctl_dout),
+   .we(ioctl_wr),
+   .ready()
+);
+
 
 wire [19:0] ext_rom_a;
-wire  [7:0] ext_rom_d;
-
-spramv #(15) extended_rom
-    (
-     .clock(clk_sys),
-     .address((ioctl_download && ioctl_index[4:0] == 2) ? ioctl_addr : ext_rom_a),
-     .wren(ioctl_wr),
-     .data(ioctl_dout),
-     .q(ext_rom_d),
-     .cs(1'b1)
-     );
+wire  [7:0] ext_rom_d=8'hff;
 
 ////////////////  Console  ////////////////////////
 
 wire [13:0] audio;
-assign AUDIO_L = {audio,2'd0};
-assign AUDIO_R = {audio,2'd0};
+assign AUDIO_L = {1'b0,audio,1'd0};
+assign AUDIO_R = {1'b0,audio,1'd0};
 assign AUDIO_S = 0;
 assign AUDIO_MIX = 0;
 
@@ -544,7 +562,6 @@ cv_console
         .clk_en_10m7_i(ce_10m7),
         .reset_n_i(~reset),
         .por_n_o(),
-        .adam(1'b1),
         .mode(~mode),
         .ctrl_p1_i(ctrl_p1),
         .ctrl_p2_i(ctrl_p2),
@@ -597,9 +614,11 @@ cv_console
         .vram_d_o(vram_do),
         .vram_d_i(vram_di),
 
+        .cart_pages_i(cart_pages),
         .cart_a_o(cart_a),
         .cart_d_i(cart_d),
-		  
+        .cart_rd(cart_rd),
+
 		  .ext_rom_a_o(ext_rom_a),
 		  .ext_rom_d_i(ext_rom_d),
 
