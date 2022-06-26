@@ -721,6 +721,7 @@ video_mixer #(.LINE_LENGTH(290), .GAMMA(1)) video_mixer
 
 //////////////// Keypad emulation (by Alan Steremberg) ///////
 
+`ifdef DO_KEYPAD_EMULATION
 wire       pressed = ps2_key[9];
 wire [8:0] code    = ps2_key[8:0];
 always @(posedge clk_sys) begin
@@ -776,7 +777,7 @@ reg btn_0 = 0;
 reg btn_star = 0;
 reg btn_shift = 0;
 reg btn_minus = 0;
-
+`endif
 
 ////////////////  Control  ////////////////////////
 //	"J1,dir,dir,dir,dir,Fire 1,Fire 2,*,#,[8]0,1,2,3,4,5,6,7,8,9,Purple Tr,Blue Tr;",
@@ -785,8 +786,12 @@ reg btn_minus = 0;
 
 wire [0:19] keypad0 = {joya[8],joya[9],joya[10],joya[11],joya[12],joya[13],joya[14],joya[15],joya[16],joya[17],joya[6],joya[7],joya[18],joya[19],joya[3],joya[2],joya[1],joya[0],joya[4],joya[5]};
 wire [0:19] keypad1 = {joyb[8],joyb[9],joyb[10],joyb[11],joyb[12],joyb[13],joyb[14],joyb[15],joyb[16],joyb[17],joyb[6],joyb[7],joyb[18],joyb[19],joyb[3],joyb[2],joyb[1],joyb[0],joyb[4],joyb[5]};
+`ifdef DO_KEYPAD_EMULATION
 wire [0:19] keyboardemu = { btn_0, btn_1, btn_2, btn_3, btn_4, btn_5, btn_6, btn_7, btn_8, btn_9, btn_star | (btn_8&btn_shift), btn_minus | (btn_shift & btn_3), 8'b0};
 wire [0:19] keypad[2] = '{keypad0|keyboardemu,keypad1|keyboardemu};
+`else
+wire [0:19] keypad[2] = '{keypad0,keypad1};
+`endif
 
 reg [3:0] ctrl1[2] = '{'0,'0};
 assign {ctrl_p1[0],ctrl_p2[0],ctrl_p3[0],ctrl_p4[0]} = ctrl1[0];

@@ -1353,7 +1353,7 @@ always @(*) begin
         9'h169 : key_code = 'h87;	//END
         9'h16a : key_code = 'h87;
         9'h16b : key_code = 'hA3;	//ARROW LEFT
-        9'h16c : key_code = 'h87;	//HOME
+        9'h16c : key_code = 'h80;	//HOME
         9'h16d : key_code = 'h87;
         9'h16e : key_code = 'h87;
         9'h16f : key_code = 'h87;
