@@ -404,7 +404,9 @@ module cv_console
   //---------------------------------------------------------------------------
   // SN76489 Programmable Sound Generator
   //---------------------------------------------------------------------------
-
+`ifdef VERILATOR
+  assign psg_ready_s=1;
+`else
 
  sn76489_audio #(.FAST_IO_G(1'b0),.MIN_PERIOD_CNT_G(17)) psg_a(
                                           .clk_i(clk_i),
@@ -430,7 +432,7 @@ module cv_console
 							.mix_audio_o(psg_b_audio_s)
                      );
 
-
+`endif
   //---------------------------------------------------------------------------
   // Controller ports
   //---------------------------------------------------------------------------
@@ -650,12 +652,12 @@ if (~mreq_n_s && rfsh_n_s && iorq_n_s && (~rd_n_s | ~wr_n_s)) begin
 if (clk_en_3m58_p_s)
 begin
   if (rd_n_s && ~rd_z80) begin
-        $display("%t RdZ80: %x %x",$stime, a_s,d_to_cpu_s);
+        //$display("%t RdZ80: %x %x",$stime, a_s,d_to_cpu_s);
         //rd_z80 <= 1;
 
   end
   if (wr_n_s && ~wr_z80) begin
-        $display("%t WrZ80: %x %x",$stime, a_s,d_from_cpu_s);
+        //$display("%t WrZ80: %x %x",$stime, a_s,d_from_cpu_s);
         //wr_z80 <= 1;
   end
 
@@ -664,8 +666,8 @@ end
 if (mreq_n_s && rfsh_n_s && ~iorq_n_s && (~rd_n_s | ~wr_n_s)) begin
 if (clk_en_3m58_p_s)
 begin
-      if (~wr_n_s) $display("OutZ80(0x%X,0x%X)",a_s[7:0],d_from_cpu_s);
-      if (~rd_n_s) $display("InZ80(0x%X) result: %x",a_s[7:0],d_to_cpu_s);
+      //if (~wr_n_s) $display("OutZ80(0x%X,0x%X)",a_s[7:0],d_from_cpu_s);
+      //if (~rd_n_s) $display("InZ80(0x%X) result: %x",a_s[7:0],d_to_cpu_s);
 end
 end
 
@@ -681,12 +683,12 @@ end
             rd_z80_c = 0;
             wr_z80_c = 0;
             if (~rd_n_s) begin
-              $display("%t RdZ80: %x %x",$stime, a_s,d_to_cpu_s);
+              //$display("%t RdZ80: %x %x",$stime, a_s,d_to_cpu_s);
               rd_z80_c = 1;
 
             end
             if (~wr_n_s) begin
-              $display("%t WrZ80: %x %x",$stime, a_s,d_from_cpu_s);
+              //$display("%t WrZ80: %x %x",$stime, a_s,d_from_cpu_s);
               wr_z80_c = 1;
             end
           end

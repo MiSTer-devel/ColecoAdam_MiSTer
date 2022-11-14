@@ -63,7 +63,9 @@ module cv_ctrl
    input [2:1]        ctrl_p7_i,
    output [2:1]       ctrl_p8_o,
    input [2:1]        ctrl_p9_i,
-   output logic [7:0] d_o
+   output logic [7:0] d_o,
+   output logic     int_n_o
+
    );
 
   logic               sel_q;
@@ -98,6 +100,8 @@ module cv_ctrl
   assign ctrl_p8_o[1] = (~sel_q);
   assign ctrl_p8_o[2] = (~sel_q);
 
+
+   assign int_n_o = 1;
   //---------------------------------------------------------------------------
   // Process ctrl_read
   //
