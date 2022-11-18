@@ -46,6 +46,8 @@ module track_loader_adam
 
   always_ff @(posedge clk) begin
 
+    if (disk_wr && disk_present) floppy_track_dirty <= '1;
+
     // If the disk is loaded, we capture the image size
     if (img_mounted) begin
       disk_size    <= img_size;
@@ -108,7 +110,9 @@ module track_loader_adam
          */
       end
       WRITE: begin
+        $display("Disk Writing %x", sd_buff_addr);
         if (&sd_buff_addr) begin
+          floppy_track_dirty <= '0;
           sd_wr              <= 0;
           lba_fdd            <= lba_fdd + 1'd1;
           floppy_state       <= W4IDLE;
@@ -123,7 +127,9 @@ module track_loader_adam
          */
       end
       W4IDLE: begin
-        if (~disk_load && ~disk_flush) floppy_state <= IDLE;
+        if (~disk_load && ~disk_flush) begin
+          floppy_state <= IDLE;
+        end
       end
     endcase // case (floppy_state)
 
