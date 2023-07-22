@@ -25,6 +25,7 @@ module track_loader_adam
    input [8:0]         disk_addr, // Byte to read or write from sector
    input               disk_wr, // Write data into sector (read when low)
    input               disk_flush, // sector access done, so flush (hint)
+   output              disk_flushed, // Flush completed
    output logic        disk_error, // out of bounds (?)
    input [7:0]         disk_din,
    output logic [7:0]  disk_data
@@ -45,6 +46,7 @@ module track_loader_adam
   logic                         old_ack;
 
   always_ff @(posedge clk) begin
+    disk_flushed <= '0;
 
     if (disk_wr && disk_present) floppy_track_dirty <= '1;
 
@@ -128,6 +130,7 @@ module track_loader_adam
       end
       W4IDLE: begin
         if (~disk_load && ~disk_flush) begin
+          disk_flushed <= '1;
           floppy_state <= IDLE;
         end
       end

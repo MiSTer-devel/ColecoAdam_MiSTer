@@ -163,6 +163,7 @@ module cv_console
    output logic [8:0]           disk_addr, // Byte to read or write from sector
    output logic [TOT_DISKS-1:0] disk_wr, // Write data into sector (read when low)
    output logic [TOT_DISKS-1:0] disk_flush, // sector access done; so flush (hint)
+   input logic [TOT_DISKS-1:0]  disk_flushed, // sector access done; so flush (hint)
    input logic [TOT_DISKS-1:0]  disk_error, // out of bounds (?)
    input logic [7:0]            disk_data[TOT_DISKS],
    output logic [7:0]           disk_din,
@@ -554,6 +555,7 @@ module cv_console
      .disk_addr, // Byte to read or write from sector
      .disk_wr, // Write data into sector (read when low)
      .disk_flush, // sector access done, so flush (hint)
+     .disk_flushed, // sector access done, so flush (hint)
      .disk_error, // out of bounds (?)
      .disk_data,
      .disk_din,

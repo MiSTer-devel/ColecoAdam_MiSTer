@@ -102,10 +102,11 @@ module emu
 
 );
 
-//  initial begin
- //   $dumpfile("test.fst");
-//    $dumpvars;
-//  end
+  initial begin
+    $dumpfile("test.fst");
+    $dumpvars;
+    //$dumpvars(0,TOP.emu.g_TL[0].track_loader_a);
+  end
 
  wire [15:0] joystick_a0 =  joystick_l_analog_0;
 
@@ -378,6 +379,7 @@ wire  [7:0] ext_rom_d=8'hff;
   logic [8:0]           disk_addr; // Byte to read or write from sector
   logic [TOT_DISKS-1:0] disk_wr; // Write data into sector (read when low)
   logic [TOT_DISKS-1:0] disk_flush; // sector access done, so flush (hint)
+  logic [TOT_DISKS-1:0] disk_flushed; // sector access done, so flush (hint)
   logic [TOT_DISKS-1:0] disk_error; // out of bounds (?)
   logic [7:0]           disk_data[TOT_DISKS];
   logic [7:0]           disk_din;
@@ -483,6 +485,7 @@ wire  [7:0] ext_rom_d=8'hff;
      .disk_addr(disk_addr),
      .disk_wr(disk_wr),
      .disk_flush(disk_flush),
+     .disk_flushed(disk_flushed),
      .disk_error(disk_error),
      .disk_data(disk_data),
      .disk_din(disk_din),
@@ -520,6 +523,7 @@ wire  [7:0] ext_rom_d=8'hff;
         .disk_addr          (disk_addr),
         .disk_wr            (disk_wr[i]),
         .disk_flush         (disk_flush[i]),
+        .disk_flushed       (disk_flushed[i]),
         .disk_error         (disk_error[i]),
         .disk_din           (disk_din),
         .disk_data          (disk_data[i])
