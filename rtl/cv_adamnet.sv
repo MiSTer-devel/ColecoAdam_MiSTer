@@ -734,7 +734,7 @@ module cv_adamnet
                {
                 DISK_IDLE,
                 DISK_READ[4],
-                DISK_WRITE[3],
+                DISK_WRITE[4],
                 TAPE_READ[4],
                 TAPE_WRITE[1]
                 } disk_state_t;
@@ -883,13 +883,15 @@ module cv_adamnet
         disk_state    <= DISK_WRITE1;
       end
       DISK_WRITE1: begin
+        ramb_addr    <= ramb_addr;
+        int_ramb_addr[0]    <= int_ramb_addr[0];
         $display("write0 %0h, %0h", ramb_addr, dcb_counter);
         // Write up to 512 bytes (might be less)
         disk_addr         <= data_counter;
         disk_din          <= ramb_din;
-        disk_wr[disk_dev] <= '1;
         if (data_counter < dcb_counter && data_counter < 16'h200) begin
           // We are within the sector
+          disk_wr[disk_dev] <= '1;
           ramb_addr    <= ramb_addr + 1'b1;
           int_ramb_addr[0]    <= int_ramb_addr[0] + 1'b1;
           ramb_rd      <= '1;
@@ -909,12 +911,21 @@ module cv_adamnet
         end // else: !if(data_counter < dcb_counter)
       end // case: DISK_READ1
       DISK_WRITE2: begin
+        ramb_addr    <= ramb_addr;
+        int_ramb_addr[0]    <= int_ramb_addr[0];
         if (disk_flushed) begin
+          ramb_addr    <= ramb_addr - 1'b1;
           data_counter <= '0;
           disk_sec     <= disk_sec + 1'b1; // Advance for next sector
           dcb_counter  <= dcb_counter - 16'h200;
-          disk_state   <= DISK_WRITE1;
+          disk_state   <= DISK_WRITE3;
         end
+      end
+      DISK_WRITE3: begin
+        $display("write0 %0h, %0h", ramb_addr, dcb_counter);
+        ramb_addr     <= ramb_addr + 1'b1;
+        ramb_rd       <= '1;
+        disk_state    <= DISK_WRITE1;
       end
       TAPE_READ0: begin
         //disk_sector <= disk_sec[31:0];
