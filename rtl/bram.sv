@@ -37,9 +37,9 @@ module bram #(
 reg [width_a-1:0] mem [(2**widthad_a)-1:0];
 
 // Port A
-  //assign q_a      = mem[address_a];
+  assign q_a      = mem[address_a];
 always @(posedge clock_a) begin
-    q_a      <= mem[address_a];
+    //q_a      <= mem[address_a];
     if(wren_a) begin
         //q_a      <= data_a;
         mem[address_a] <= data_a;

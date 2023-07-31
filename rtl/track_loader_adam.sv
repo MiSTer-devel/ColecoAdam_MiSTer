@@ -31,11 +31,12 @@ module track_loader_adam
    output logic [7:0]  disk_data
    );
 
-  enum bit [1:0] {
+  enum bit [2:0] {
                   IDLE,
                   READ,
                   WRITE,
-                  W4IDLE
+                  W4IDLE_READ,
+                  W4IDLE_WRITE
                   } floppy_state;
 
   // when we write to the disk, we need to mark it dirty
@@ -96,7 +97,7 @@ module track_loader_adam
         if (&sd_buff_addr) begin
           sd_rd              <= 0;
           lba_fdd            <= lba_fdd + 1'd1;
-          floppy_state       <= W4IDLE;
+          floppy_state       <= W4IDLE_READ;
           disk_sector_loaded <= '1;
         end
         /*
@@ -117,7 +118,7 @@ module track_loader_adam
           floppy_track_dirty <= '0;
           sd_wr              <= 0;
           lba_fdd            <= lba_fdd + 1'd1;
-          floppy_state       <= W4IDLE;
+          floppy_state       <= W4IDLE_WRITE;
         end
         /*
         if (~old_ack & sd_ack) begin
@@ -128,8 +129,14 @@ module track_loader_adam
         end
          */
       end
-      W4IDLE: begin
+      W4IDLE_READ: begin
         if (~disk_load && ~disk_flush) begin
+          disk_flushed <= '1;
+          floppy_state <= IDLE;
+        end
+      end
+      W4IDLE_WRITE: begin
+        if (~disk_flush) begin
           disk_flushed <= '1;
           floppy_state <= IDLE;
         end
