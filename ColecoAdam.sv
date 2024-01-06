@@ -426,7 +426,28 @@ dpramv #(8, 15) ram
         .ce_a(1'b1)
 );
 
+  always @(posedge clk_sys) begin
+    ramb_wr_ack <= ramb_wr;
+    ramb_rd_ack <= ramb_rd;
+  end
+
   assign ramb_din = ~ramb_addr[15] ? int_ramb_din[0] : int_ramb_din[1];
+
+wire [13:0] vram_a;
+wire        vram_we;
+wire  [7:0] vram_di;
+wire  [7:0] vram_do;
+
+spramv #(14) vram
+(
+        .clock(clk_sys),
+        .address(vram_a),
+        .wren(vram_we),
+        .data(vram_do),
+        .enable(1'b1),
+        .cs(1'b1),
+        .q(vram_di)
+);
 
 wire [14:0]         lowerexpansion_ram_a;
 wire lowerexpansion_ram_ce_n;
@@ -467,25 +488,6 @@ wire  [7:0] upper_ram_do;
      .ce_a(1'b1)
      );
 
-  always @(posedge clk_sys) begin
-    ramb_wr_ack <= ramb_wr;
-    ramb_rd_ack <= ramb_rd;
-  end
-
-
-wire [13:0] vram_a;
-wire        vram_we;
-wire  [7:0] vram_di;
-wire  [7:0] vram_do;
-
-spramv #(14) vram
-(
-        .clock(clk_sys),
-        .address(vram_a),
-        .wren(vram_we),
-        .data(vram_do),
-        .q(vram_di)
-);
 
 
 wire [19:0] cart_a;
@@ -493,7 +495,8 @@ wire  [7:0] cart_d;
 wire        cart_rd;
 
 reg [5:0] cart_pages = 6'b0;
-always @(posedge clk_sys) if(ioctl_download) cart_pages <= ioctl_addr[19:14];
+//always @(posedge clk_sys) if(ioctl_download) cart_pages <= ioctl_addr[19:14];
+always @(posedge clk_sys) if(ioctl_wr) cart_pages <= ioctl_addr[19:14];
 
 
 assign SDRAM_CLK = ~clk_sys;
