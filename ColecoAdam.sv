@@ -404,6 +404,7 @@ wire [14:0] ram_a = cpu_ram_a;
   logic        ramb_wr;
   logic        ramb_rd;
   logic [7:0]  ramb_dout;
+  logic [7:0]  int_ramb_din[2];
   logic [7:0]  ramb_din;
   logic        ramb_wr_ack;
   logic        ramb_rd_ack;
@@ -419,11 +420,13 @@ dpramv #(8, 15) ram
         .address_b(ramb_addr[14:0]),
         .wren_b(ramb_wr & ~ramb_addr[15]),
         .data_b(ramb_dout),
-        .q_b(ramb_din),
+        .q_b(int_ramb_din[0]),
 
         .enable_b(1'b1),
         .ce_a(1'b1)
 );
+
+  assign ramb_din = ~ramb_addr[15] ? int_ramb_din[0] : int_ramb_din[1];
 
 wire [14:0]         lowerexpansion_ram_a;
 wire lowerexpansion_ram_ce_n;
@@ -458,7 +461,7 @@ wire  [7:0] upper_ram_do;
      .address_b(ramb_addr[14:0]),
      .wren_b(ramb_wr & ramb_addr[15]),
      .data_b(ramb_dout),
-     .q_b(),
+     .q_b(int_ramb_din[1]),
 
      .enable_b(1'b1),
      .ce_a(1'b1)
@@ -610,6 +613,7 @@ cv_console
         .ramb_addr(ramb_addr),
         .ramb_wr(ramb_wr),
         .ramb_rd(ramb_rd),
+        .ramb_din(ramb_din),
         .ramb_dout(ramb_dout),
         .ramb_wr_ack(ramb_wr_ack),
         .ramb_rd_ack(ramb_rd_ack),
