@@ -153,7 +153,7 @@ module track_loader_adam
     end
   end
 
-`ifdef VERILATOR
+//`ifdef VERILATOR
 bram #(8,9) floppy_dpram_onetrack
 (
         .clock_a(clk),
@@ -168,7 +168,7 @@ bram #(8,9) floppy_dpram_onetrack
         .data_b(disk_din),
         .q_b(disk_data)
 );
-
+/*
 `else
 
 dpram #(9,8) floppy_dpram
@@ -187,5 +187,5 @@ dpram #(9,8) floppy_dpram
 
 );
 `endif
-
+*/
 endmodule

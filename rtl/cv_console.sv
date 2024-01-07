@@ -294,7 +294,7 @@ module cv_console
   // T80 CPU
   //---------------------------------------------------------------------------
 
-  `ifdef VERILATOR
+//  `ifdef VERILATOR
 
   tv80e Cpu
     (
@@ -318,7 +318,7 @@ module cv_console
      .di          (d_to_cpu_s),
      .dout        (d_from_cpu_s)
      );
-
+/*
   `else
 
   T80pa #(.mode(0)) t80a_b(
@@ -329,7 +329,7 @@ module cv_console
                            .wait_n(wait_n_s),
                            .int_n(int_n_s),
                            .nmi_n(nmi_n_s),
-                           .busrq_n(vdd_s),
+                           .busrq_n((USE_REQ == 1) ? adamnet_req_n : vdd_s),
                            .m1_n(m1_n_s),
                            .mreq_n(mreq_n_s),
                            .iorq_n(iorq_n_s),
@@ -337,14 +337,14 @@ module cv_console
                            .wr_n(wr_n_s),
                            .rfsh_n(rfsh_n_s),
                            .halt_n(),
-                           .busak_n(),
+                           .busak_n(adamnet_ack_n),
                            .a(a_s),
                            .di(d_to_cpu_s),
                            .dout(d_from_cpu_s)
                            );
 
 `endif
-
+*/
 
 
   //---------------------------------------------------------------------------

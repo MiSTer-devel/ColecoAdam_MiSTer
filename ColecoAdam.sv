@@ -24,7 +24,7 @@ module emu
   (
    parameter  NUM_DISKS = 4,
    parameter  NUM_TAPES = 4,
-   parameter  USE_REQ   = 0,
+   parameter  USE_REQ   = 1,
    parameter  TOT_DISKS = NUM_DISKS + NUM_TAPES
    )
 (
