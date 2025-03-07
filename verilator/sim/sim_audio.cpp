@@ -2,11 +2,11 @@
 #include <iostream>
 #include <fstream>
 #include <list>
-using namespace std;
+//using namespace std;
 
 SimClock clk;
 bool outputToFile;
-ofstream audioFile;
+std::ofstream audioFile;
 
 SimAudio::SimAudio(int systemClockFrequency, bool saveToFile)
 {
@@ -50,7 +50,7 @@ void SimAudio::Initialise() {
 	if (outputToFile)
 	{
 		// Setup Audio output stream
-		audioFile.open("audio.wav", ios::binary);
+		audioFile.open("audio.wav", std::ios::binary);
 	}
 }
 void SimAudio::CleanUp() {

@@ -1,6 +1,7 @@
 #include <verilated.h>
 //#include "verilated_fst_sc.h"
 #include "Vemu.h"
+#include "Vemu__Syms.h"
 
 #include "imgui.h"
 #include "implot.h"
@@ -11,6 +12,14 @@
 #else
 #define WIN32
 #include <dinput.h>
+#endif
+
+#define VERILATOR_MAJOR_VERSION (VERILATOR_VERSION_INTEGER / 1000000)
+
+#if VERILATOR_MAJOR_VERSION >= 5
+#define VERTOPINTERN top->rootp
+#else
+#define VERTOPINTERN top
 #endif
 
 #include "sim_console.h"
@@ -106,9 +115,9 @@ vluint64_t soft_reset_time=0;
 
 // ADAM GLOBALS
 #include "Coleco.h"
-byte *ROMPage[8];              /* 8x8kB read-only (ROM) pages   */
-byte *RAMPage[8];              /* 8x8kB read-write (RAM) pages  */
-byte Port60=1;                   /* Adam port 0x60-0x7F (memory)  */
+Byte *ROMPage[8];              /* 8x8kB read-only (ROM) pages   */
+Byte *RAMPage[8];              /* 8x8kB read-write (RAM) pages  */
+Byte Port60=1;                   /* Adam port 0x60-0x7F (memory)  */
 
 // MAME debug log
 //#define CPU_DEBUG
@@ -147,16 +156,16 @@ bool writeLog(const char* line)
 
         char buf[6];
 #if 0
-        unsigned char in1 = top->emu__DOT__system__DOT__in_p1_data;
+        unsigned char in1 = VERTOPINTERN->emu__DOT__system__DOT__in_p1_data;
         sprintf(buf, " %02X", in1);
         c.append(buf);
-        unsigned char in2 = top->emu__DOT__system__DOT__in_p2_data;
+        unsigned char in2 = VERTOPINTERN->emu__DOT__system__DOT__in_p2_data;
         sprintf(buf, " %02X", in2);
         c.append(buf);
-        unsigned char in3 = top->emu__DOT__system__DOT__in_p3_data;
+        unsigned char in3 = VERTOPINTERN->emu__DOT__system__DOT__in_p3_data;
         sprintf(buf, " %02X", in3);
         c.append(buf);
-        unsigned char in4 = top->emu__DOT__system__DOT__in_p4_data;
+        unsigned char in4 = VERTOPINTERN->emu__DOT__system__DOT__in_p4_data;
         sprintf(buf, " %02X", in4);
         c.append(buf);
 #endif
@@ -290,7 +299,7 @@ SimAudio audio(clk_sys_freq, false);
 // Reset simulation variables and clocks
 void resetSim() {
         main_time = 0;
-        top->reset = 1;
+        VERTOPINTERN->reset = 1;
         clk_sys.Reset();
 }
 
@@ -299,31 +308,31 @@ int verilate() {
         if (!Verilated::gotFinish()) {
                 if (soft_reset){
                         fprintf(stderr,"soft_reset.. in gotFinish\n");
-                        top->soft_reset = 1;
+                        VERTOPINTERN->soft_reset = 1;
                         soft_reset=0;
                         soft_reset_time=0;
-                        fprintf(stderr,"turning on %x\n",top->soft_reset);
+                        fprintf(stderr,"turning on %x\n",VERTOPINTERN->soft_reset);
                 }
                 if (clk_sys.IsRising()) {
                         soft_reset_time++;
                 }
                 if (soft_reset_time==initialReset) {
-                        top->soft_reset = 0;
-                        fprintf(stderr,"turning off %x\n",top->soft_reset);
+                        VERTOPINTERN->soft_reset = 0;
+                        fprintf(stderr,"turning off %x\n",VERTOPINTERN->soft_reset);
                         fprintf(stderr,"soft_reset_time %ld initialReset %x\n",soft_reset_time,initialReset);
                 }
 
                 // Assert reset during startup
-                if (main_time < initialReset) { top->reset = 1; }
+                if (main_time < initialReset) { VERTOPINTERN->reset = 1; }
                 // Deassert reset after startup
-                if (main_time == initialReset) { top->reset = 0; }
+                if (main_time == initialReset) { VERTOPINTERN->reset = 0; }
 
                 // Clock dividers
                 clk_sys.Tick();
 
                 // Set system clock in core
-                top->clk_sys = clk_sys.clk;
-                top->adam = adam_mode;
+                VERTOPINTERN->clk_sys = clk_sys.clk;
+                VERTOPINTERN->adam = adam_mode;
 
                 // Simulate both edges of system clock
                 if (clk_sys.clk != clk_sys.old) {
@@ -342,14 +351,14 @@ int verilate() {
 #ifndef DISABLE_AUDIO
                 if (clk_sys.IsRising())
                 {
-                        audio.Clock(top->AUDIO_L, top->AUDIO_R);
+                        audio.Clock(VERTOPINTERN->AUDIO_L, VERTOPINTERN->AUDIO_R);
                 }
 #endif
 
                 // Output pixels on rising edge of pixel clock
-                if (clk_sys.IsRising() && top->CE_PIXEL ) {
-                        uint32_t colour = 0xFF000000 | top->VGA_B << 16 | top->VGA_G << 8 | top->VGA_R;
-                        video.Clock(top->VGA_HB, top->VGA_VB, top->VGA_HS, top->VGA_VS, colour);
+                if (clk_sys.IsRising() && VERTOPINTERN->CE_PIXEL ) {
+                        uint32_t colour = 0xFF000000 | VERTOPINTERN->VGA_B << 16 | VERTOPINTERN->VGA_G << 8 | VERTOPINTERN->VGA_R;
+                        video.Clock(VERTOPINTERN->VGA_HB, VERTOPINTERN->VGA_VB, VERTOPINTERN->VGA_HS, VERTOPINTERN->VGA_VS, colour);
                 }
 
                 if (clk_sys.IsRising()) {
@@ -357,51 +366,51 @@ int verilate() {
 
                   /*A
                         /* ADAM NET */
-                  //                        if (top->emu__DOT__console__DOT__adamnet__DOT__adam_reset_pcb_n_i == 0) // negative signal
+                  //                        if (VERTOPINTERN->emu__DOT__console__DOT__adamnet__DOT__adam_reset_pcb_n_i == 0) // negative signal
                   //     {
                   //             printf("ResetPCB from sim_main\n");
                   //            ResetPCB();
                   //    }
                   //    /* if we are writing -- check it ? */
-                  //    if (top->emu__DOT__console__DOT__adamnet__DOT__z80_wr)
+                  //    if (VERTOPINTERN->emu__DOT__console__DOT__adamnet__DOT__z80_wr)
                   //    {
                   //
-                  //            word A = top->emu__DOT__console__DOT__adamnet__DOT__z80_addr;
-                  //            word V = top->emu__DOT__console__DOT__adamnet__DOT__z80_data_wr;
+                  //            word A = VERTOPINTERN->emu__DOT__console__DOT__adamnet__DOT__z80_addr;
+                  //            word V = VERTOPINTERN->emu__DOT__console__DOT__adamnet__DOT__z80_data_wr;
                   //            if(PCBTable[A]) {
                   //                    printf("z80_wr, WritePCB A %x V %x %x\n",A,V,PCBTable[A]);
                   //                    WritePCB(A,V);
                   //            }
                   //    }
-                  //    if (top->emu__DOT__console__DOT__adamnet__DOT__z80_rd)
+                  //    if (VERTOPINTERN->emu__DOT__console__DOT__adamnet__DOT__z80_rd)
                   //    {
-                  //            word A = top->emu__DOT__console__DOT__adamnet__DOT__z80_addr;
+                  //            word A = VERTOPINTERN->emu__DOT__console__DOT__adamnet__DOT__z80_addr;
                   //            if(PCBTable[A]) ReadPCB(A);
         //CData/*7:0*/ emu__DOT__console__DOT__adamnet__DOT__z80_data_rd;
                   //    }
 
 
 #ifdef CPU_DEBUG
-                        if (!top->reset) {
-                                unsigned short pc = top->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__PC;
+                        if (!VERTOPINTERN->reset) {
+                                unsigned short pc = VERTOPINTERN->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__PC;
 
-                                unsigned char di = top->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__di;
-                                unsigned short ad = top->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__A;
-                                unsigned char ir = top->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__IR;
+                                unsigned char di = VERTOPINTERN->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__di;
+                                unsigned short ad = VERTOPINTERN->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__A;
+                                unsigned char ir = VERTOPINTERN->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__IR;
 
-                                unsigned char acc = top->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__ACC;
-                                unsigned char z = top->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__flag_z;
+                                unsigned char acc = VERTOPINTERN->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__ACC;
+                                unsigned char z = VERTOPINTERN->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__flag_z;
 
-                                unsigned char phi = top->emu__DOT__console__DOT__Cpu__DOT__cen;
-                                unsigned char mcycle = top->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__mcycle;
-                                unsigned char mreq = top->emu__DOT__console__DOT__Cpu__DOT__mreq_n;
-                                bool ir_changed = top->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__ir_changed;
+                                unsigned char phi = VERTOPINTERN->emu__DOT__console__DOT__Cpu__DOT__cen;
+                                unsigned char mcycle = VERTOPINTERN->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__mcycle;
+                                unsigned char mreq = VERTOPINTERN->emu__DOT__console__DOT__Cpu__DOT__mreq_n;
+                                bool ir_changed = VERTOPINTERN->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__ir_changed;
 
-                                bool rom_read = top->emu__DOT__console__DOT__rom_read;
-                                unsigned char E = top->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__i_reg__DOT__E;
-                                unsigned char D = top->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__i_reg__DOT__D;
+                                bool rom_read = VERTOPINTERN->emu__DOT__console__DOT__rom_read;
+                                unsigned char E = VERTOPINTERN->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__i_reg__DOT__E;
+                                unsigned char D = VERTOPINTERN->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__i_reg__DOT__D;
 
-                                top->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__ir_changed = 0;
+                                VERTOPINTERN->emu__DOT__console__DOT__Cpu__DOT__i_tv80_core__DOT__ir_changed = 0;
 
                                 bool new_data = (mreq && !last_mreq && mcycle <= 4);
                                 bool rom_data = (!rom_read && rom_read_last);
@@ -544,12 +553,12 @@ int main(int argc, char** argv, char** env) {
         top = new Vemu();
         Verilated::commandArgs(argc, argv);
         Verilated::traceEverOn(true);
-ROMPage[0] = (byte *)&top->emu__DOT__ram__DOT__ram;
+ROMPage[0] = (Byte *)&VERTOPINTERN->emu__DOT__ram__DOT__ram;
 ROMPage[1] = ROMPage[0]+0x2000;
 ROMPage[2] = ROMPage[1]+0x2000;
 ROMPage[3] = ROMPage[2]+0x2000;
 
-ROMPage[4] = (byte *)&top->emu__DOT__upper_ram__DOT__ram;
+ROMPage[4] = (Byte *)&VERTOPINTERN->emu__DOT__upper_ram__DOT__ram;
 ROMPage[5] = ROMPage[4]+0x2000;
 ROMPage[6] = ROMPage[5]+0x2000;
 ROMPage[7] = ROMPage[6]+0x2000;
@@ -585,37 +594,37 @@ LoadFDI(&Disks[4],"adam.ddp",FMT_DDP);
 #endif
 
         // Attach bus
-        bus.ioctl_addr = &top->ioctl_addr;
-        bus.ioctl_index = &top->ioctl_index;
-        bus.ioctl_wait = &top->ioctl_wait;
-        bus.ioctl_download = &top->ioctl_download;
-        //bus.ioctl_upload = &top->ioctl_upload;
-        bus.ioctl_wr = &top->ioctl_wr;
-        bus.ioctl_dout = &top->ioctl_dout;
-        //bus.ioctl_din = &top->ioctl_din;
-        input.ps2_key = &top->ps2_key;
+        bus.ioctl_addr = &VERTOPINTERN->ioctl_addr;
+        bus.ioctl_index = &VERTOPINTERN->ioctl_index;
+        bus.ioctl_wait = &VERTOPINTERN->ioctl_wait;
+        bus.ioctl_download = &VERTOPINTERN->ioctl_download;
+        //bus.ioctl_upload = &VERTOPINTERN->ioctl_upload;
+        bus.ioctl_wr = &VERTOPINTERN->ioctl_wr;
+        bus.ioctl_dout = &VERTOPINTERN->ioctl_dout;
+        //bus.ioctl_din = &VERTOPINTERN->ioctl_din;
+        input.ps2_key = &VERTOPINTERN->ps2_key;
 
         // hookup blk device
         //blockdevice.MountDisk("adam.dsk",0);
-        blockdevice.sd_lba[0] = &top->sd_lba[0];
-        blockdevice.sd_lba[1] = &top->sd_lba[1];
-        blockdevice.sd_lba[2] = &top->sd_lba[2];
-        blockdevice.sd_lba[3] = &top->sd_lba[3];
-        blockdevice.sd_lba[4] = &top->sd_lba[4];
-        blockdevice.sd_lba[5] = &top->sd_lba[5];
-        blockdevice.sd_lba[6] = &top->sd_lba[6];
-        blockdevice.sd_lba[7] = &top->sd_lba[7];
-        blockdevice.sd_rd = &top->sd_rd;
-        blockdevice.sd_wr = &top->sd_wr;
-        blockdevice.sd_ack = &top->sd_ack;
-        blockdevice.sd_buff_addr= &top->sd_buff_addr;
-        blockdevice.sd_buff_dout= &top->sd_buff_dout;
-        blockdevice.sd_buff_din[0]= &top->sd_buff_din[0];
-        blockdevice.sd_buff_din[1]= &top->sd_buff_din[1];
-        blockdevice.sd_buff_wr= &top->sd_buff_wr;
-        blockdevice.img_mounted= &top->img_mounted;
-        blockdevice.img_readonly= &top->img_readonly;
-        blockdevice.img_size= &top->img_size;
+        blockdevice.sd_lba[0] = &VERTOPINTERN->sd_lba[0];
+        blockdevice.sd_lba[1] = &VERTOPINTERN->sd_lba[1];
+        blockdevice.sd_lba[2] = &VERTOPINTERN->sd_lba[2];
+        blockdevice.sd_lba[3] = &VERTOPINTERN->sd_lba[3];
+        blockdevice.sd_lba[4] = &VERTOPINTERN->sd_lba[4];
+        blockdevice.sd_lba[5] = &VERTOPINTERN->sd_lba[5];
+        blockdevice.sd_lba[6] = &VERTOPINTERN->sd_lba[6];
+        blockdevice.sd_lba[7] = &VERTOPINTERN->sd_lba[7];
+        blockdevice.sd_rd = &VERTOPINTERN->sd_rd;
+        blockdevice.sd_wr = &VERTOPINTERN->sd_wr;
+        blockdevice.sd_ack = &VERTOPINTERN->sd_ack;
+        blockdevice.sd_buff_addr= &VERTOPINTERN->sd_buff_addr;
+        blockdevice.sd_buff_dout= &VERTOPINTERN->sd_buff_dout;
+        blockdevice.sd_buff_din[0]= &VERTOPINTERN->sd_buff_din[0];
+        blockdevice.sd_buff_din[1]= &VERTOPINTERN->sd_buff_din[1];
+        blockdevice.sd_buff_wr= &VERTOPINTERN->sd_buff_wr;
+        blockdevice.img_mounted= &VERTOPINTERN->img_mounted;
+        blockdevice.img_readonly= &VERTOPINTERN->img_readonly;
+        blockdevice.img_size= &VERTOPINTERN->img_size;
 
 
 #ifndef DISABLE_AUDIO
@@ -728,61 +737,61 @@ LoadFDI(&Disks[4],"adam.ddp",FMT_DDP);
 
                 // Memory debug
                 ImGui::Begin("ram Editor");
-                mem_edit.DrawContents(&top->emu__DOT__ram__DOT__ram , 32768, 0);
+                mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__ram__DOT__ram , 32768, 0);
                 ImGui::End();
                 ImGui::Begin("upper ram Editor");
-                mem_edit.DrawContents(&top->emu__DOT__upper_ram__DOT__ram, 32768, 0);
+                mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__upper_ram__DOT__ram, 32768, 0);
                 ImGui::End();
                 ImGui::Begin("lower expansion Editor");
-                mem_edit.DrawContents(&top->emu__DOT__lowerexpansion_ram__DOT__mem, 32768, 0);
+                mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__lowerexpansion_ram__DOT__mem, 32768, 0);
                 ImGui::End();
                 //ImGui::Begin("CHROM Editor");
-                //mem_edit.DrawContents(top->emu__DOT__system__DOT__chrom__DOT__mem, 2048, 0);
+                //mem_edit.DrawContents(VERTOPINTERN->emu__DOT__system__DOT__chrom__DOT__mem, 2048, 0);
                 //ImGui::End();
                 //ImGui::Begin("WKRAM Editor");
-                //mem_edit.DrawContents(&top->emu__DOT__system__DOT__wkram__DOT__mem, 16384, 0);
+                //mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__system__DOT__wkram__DOT__mem, 16384, 0);
                 //ImGui::End();
                 //ImGui::Begin("CHRAM Editor");
-                //mem_edit.DrawContents(&top->emu__DOT__system__DOT__chram__DOT__mem, 2048, 0);
+                //mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__system__DOT__chram__DOT__mem, 2048, 0);
                 //ImGui::End();
                 //ImGui::Begin("FGCOLRAM Editor");
-                //mem_edit.DrawContents(&top->emu__DOT__system__DOT__fgcolram__DOT__mem, 2048, 0);
+                //mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__system__DOT__fgcolram__DOT__mem, 2048, 0);
                 //ImGui::End();
                 //ImGui::Begin("BGCOLRAM Editor");
-                //mem_edit.DrawContents(&top->emu__DOT__system__DOT__bgcolram__DOT__mem, 2048, 0);
+                //mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__system__DOT__bgcolram__DOT__mem, 2048, 0);
                 //ImGui::End();
                 //ImGui::Begin("Sprite RAM");
-                //mem_edit.DrawContents(&top->emu__DOT__system__DOT__spriteram__DOT__mem, 96, 0);
+                //mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__system__DOT__spriteram__DOT__mem, 96, 0);
                 //ImGui::End();
                 //ImGui::Begin("Sprite Linebuffer RAM");
-                //mem_edit.DrawContents(&top->emu__DOT__system__DOT__spritelbram__DOT__mem, 1024, 0);
+                //mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__system__DOT__spritelbram__DOT__mem, 1024, 0);
                 //ImGui::End();
                 //ImGui::Begin("Sprite Collision Buffer RAM A");
-                //mem_edit.DrawContents(&top->emu__DOT__system__DOT__comet__DOT__spritecollisionbufferram_a__DOT__mem, 512, 0);
+                //mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__system__DOT__comet__DOT__spritecollisionbufferram_a__DOT__mem, 512, 0);
                 //ImGui::End();
                 //ImGui::Begin("Sprite Collision Buffer RAM B");
-                //mem_edit.DrawContents(&top->emu__DOT__system__DOT__comet__DOT__spritecollisionbufferram_b__DOT__mem, 512, 0);
+                //mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__system__DOT__comet__DOT__spritecollisionbufferram_b__DOT__mem, 512, 0);
                 //ImGui::End();
                 //ImGui::Begin("Sprite Collision RAM ");
-                //mem_edit.DrawContents(&top->emu__DOT__system__DOT__spritecollisionram__DOT__mem, 32, 0);
+                //mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__system__DOT__spritecollisionram__DOT__mem, 32, 0);
                 //ImGui::End();
                 //ImGui::Begin("Sprite Debug RAM");
-                //mem_edit.DrawContents(&top->emu__DOT__system__DOT__spritedebugram__DOT__mem, 128000, 0);
+                //mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__system__DOT__spritedebugram__DOT__mem, 128000, 0);
                 //ImGui::End();
                 //ImGui::Begin("Palette ROM");
-                //mem_edit.DrawContents(&top->emu__DOT__system__DOT__palrom__DOT__mem, 64, 0);
+                //mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__system__DOT__palrom__DOT__mem, 64, 0);
                 //ImGui::End();
                 //ImGui::Begin("Sprite ROM");
-                //mem_edit.DrawContents(&top->emu__DOT__system__DOT__spriterom__DOT__mem, 2048, 0);
+                //mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__system__DOT__spriterom__DOT__mem, 2048, 0);
                 //ImGui::End();
                 //ImGui::Begin("Tilemap ROM");
-                //mem_edit.DrawContents(&top->emu__DOT__system__DOT__tilemaprom__DOT__mem, 8192, 0);
+                //mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__system__DOT__tilemaprom__DOT__mem, 8192, 0);
                 //ImGui::End();
                 //ImGui::Begin("Tilemap RAM");
-                //	mem_edit.DrawContents(&top->emu__DOT__system__DOT__tilemapram__DOT__mem, 768, 0);
+                //	mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__system__DOT__tilemapram__DOT__mem, 768, 0);
                 //ImGui::End();
                 //ImGui::Begin("Sound ROM");
-                //mem_edit.DrawContents(&top->emu__DOT__system__DOT__soundrom__DOT__mem, 64000, 0);
+                //mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__system__DOT__soundrom__DOT__mem, 64000, 0);
                 //ImGui::End();
 
                 int windowX = 550;
@@ -829,14 +838,14 @@ fprintf(stderr,"filePath: %s\n",filePath.c_str());
                 ImGui::SetWindowSize(windowTitle_Audio, ImVec2(windowWidth, 250), ImGuiCond_Once);
 
 
-                //float vol_l = ((signed short)(top->AUDIO_L) / 256.0f) / 256.0f;
-                //float vol_r = ((signed short)(top->AUDIO_R) / 256.0f) / 256.0f;
+                //float vol_l = ((signed short)(VERTOPINTERN->AUDIO_L) / 256.0f) / 256.0f;
+                //float vol_r = ((signed short)(VERTOPINTERN->AUDIO_R) / 256.0f) / 256.0f;
                 //ImGui::ProgressBar(vol_l + 0.5f, ImVec2(200, 16), 0); ImGui::SameLine();
                 //ImGui::ProgressBar(vol_r + 0.5f, ImVec2(200, 16), 0);
 
                 int ticksPerSec = (24000000 / 60);
                 if (run_enable) {
-                        audio.CollectDebug((signed short)top->AUDIO_L, (signed short)top->AUDIO_R);
+                        audio.CollectDebug((signed short)VERTOPINTERN->AUDIO_L, (signed short)VERTOPINTERN->AUDIO_R);
                 }
                 int channelWidth = (windowWidth / 2)  -16;
                 ImPlot::CreateContext();
@@ -862,25 +871,25 @@ fprintf(stderr,"filePath: %s\n",filePath.c_str());
 
                 // Pass inputs to sim
 
-                top->menu = input.inputs[input_menu];
+                VERTOPINTERN->menu = input.inputs[input_menu];
 
-                top->joystick_0 = 0;
+                VERTOPINTERN->joystick_0 = 0;
                 for (int i = 0; i < input.inputCount; i++)
                 {
-                        if (input.inputs[i]) { top->joystick_0 |= (1 << i); }
+                        if (input.inputs[i]) { VERTOPINTERN->joystick_0 |= (1 << i); }
                 }
-                top->joystick_1 = top->joystick_0;
+                VERTOPINTERN->joystick_1 = VERTOPINTERN->joystick_0;
 
-                /*top->joystick_analog_0 += 1;
-                top->joystick_analog_0 -= 256;*/
-                //top->paddle_0 += 1;
+                /*VERTOPINTERN->joystick_analog_0 += 1;
+                VERTOPINTERN->joystick_analog_0 -= 256;*/
+                //VERTOPINTERN->paddle_0 += 1;
                 //if (input.inputs[0] || input.inputs[1]) {
                 //	spinner_toggle = !spinner_toggle;
-                //	top->spinner_0 = (input.inputs[0]) ? 16 : -16;
+                //	VERTOPINTERN->spinner_0 = (input.inputs[0]) ? 16 : -16;
                 //	for (char b = 8; b < 16; b++) {
-                //		top->spinner_0 &= ~(1UL << b);
+                //		VERTOPINTERN->spinner_0 &= ~(1UL << b);
                 //	}
-                //	if (spinner_toggle) { top->spinner_0 |= 1UL << 8; }
+                //	if (spinner_toggle) { VERTOPINTERN->spinner_0 |= 1UL << 8; }
                 //}
 
                 mouse_buttons = 0;
@@ -900,8 +909,8 @@ fprintf(stderr,"filePath: %s\n",filePath.c_str());
                 if (mouse_clock) { mouse_temp |= (1UL << 24); }
                 mouse_clock = !mouse_clock;
 
-                top->ps2_mouse = mouse_temp;
-                top->ps2_mouse_ext = mouse_x + (mouse_buttons << 8);
+                VERTOPINTERN->ps2_mouse = mouse_temp;
+                VERTOPINTERN->ps2_mouse_ext = mouse_x + (mouse_buttons << 8);
 
                 // Run simulation
                 if (run_enable) {

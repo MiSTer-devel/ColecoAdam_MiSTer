@@ -9,7 +9,8 @@ V_DEFINE = +define+debug=1 +define+SIMULATION=1   -CFLAGS "-I../sim/imgui -I../s
 	-I../$(RTL) \
 	-I../$(RTL)/vdp18v \
 	-I../$(RTL)/tv80 \
-	-I../$(RTL)/sn76489
+	-I../$(RTL)/sn76489 \
+        --timing
 #V_DEFINE += --converge-limit 2000 -Wno-WIDTH -Wno-IMPLICIT -Wno-MODDUP -Wno-UNSIGNED -Wno-CASEINCOMPLETE -Wno-CASEX -Wno-SYMRSVDWORD -Wno-COMBDLY -Wno-INITIALDLY -Wno-BLKANDNBLK -Wno-UNOPTFLAT -Wno-SELRANGE -Wno-CMPCONST -Wno-CASEOVERLAP -Wno-PINMISSING -Wno-MULTIDRIVEN
 #V_DEFINE += --threads 8  # this slows it way down
 V_DEFINE += --trace-fst
@@ -23,6 +24,7 @@ ifeq ($(UNAME_S), Darwin) #APPLE
 	LIBS += -L/usr/local/lib -L/opt/local/lib
 
 	CXXFLAGS += `sdl2-config --cflags` -Iimgui
+	CXXFLAGS += `sdl2-config --cflags | sed 's|include/SDL2|include/|'`
 	CXXFLAGS += -I/usr/local/include -I/opt/local/include
 	CFLAGS = $(CXXFLAGS) -Iimgui
 endif

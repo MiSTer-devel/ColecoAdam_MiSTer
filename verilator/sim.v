@@ -262,7 +262,7 @@ spramv #(14) vram
      .wren(ce_10m7 & ~(lowerexpansion_ram_we_n | lowerexpansion_ram_ce_n)),
      .data(lowerexpansion_ram_do),
      .q(lowerexpansion_ram_di),
-     .cs(1'b1),
+     .cs(1'b1)
      );
 
 

@@ -45,7 +45,7 @@ extern "C" {
 
 #ifndef BYTE_TYPE_DEFINED
 #define BYTE_TYPE_DEFINED
-typedef unsigned char byte;
+typedef unsigned char Byte;
 #endif
 
 /** FDIDisk **************************************************/
@@ -54,17 +54,17 @@ typedef unsigned char byte;
 /*************************************************************/
 typedef struct
 {
-  byte Format;     /* Original disk format (FMT_*) */
+  Byte Format;     /* Original disk format (FMT_*) */
   int  Sides;      /* Sides per disk */
   int  Tracks;     /* Tracks per side */
   int  Sectors;    /* Sectors per track */
   int  SecSize;    /* Bytes per sector */
 
-  byte *Data;      /* Disk data */
+  Byte *Data;      /* Disk data */
   int  DataSize;   /* Disk data size */
 
-  byte Header[6];  /* Current header, result of SeekFDI() */
-  byte Verbose;    /* 1: Print debugging messages */
+  Byte Header[6];  /* Current header, result of SeekFDI() */
+  Byte Verbose;    /* 1: Print debugging messages */
 } FDIDisk;
 
 /** InitFDI() ************************************************/
@@ -82,14 +82,14 @@ void EjectFDI(FDIDisk *D);
 /** dimensions. Returns disk data pointer on success, 0 on  **/
 /** failure.                                                **/
 /*************************************************************/
-byte *NewFDI(FDIDisk *D,int Sides,int Tracks,int Sectors,int SecSize);
+Byte *NewFDI(FDIDisk *D,int Sides,int Tracks,int Sectors,int SecSize);
 
 /** FormatFDI() ***********************************************/
 /** Allocate memory and create new standard disk image for a **/
 /** given format. Returns disk data pointer on success, 0 on **/
 /** failure.                                                 **/
 /**************************************************************/
-byte *FormatFDI(FDIDisk *D,int Format);
+Byte *FormatFDI(FDIDisk *D,int Format);
 
 /** LoadFDI() ************************************************/
 /** Load a disk image from a given file, in a given format  **/
@@ -114,13 +114,13 @@ int SaveFDI(FDIDisk *D,const char *FileName,int Format);
 /** Seek to given side/track/sector. Returns sector address **/
 /** on success or 0 on failure.                             **/
 /*************************************************************/
-byte *SeekFDI(FDIDisk *D,int Side,int Track,int SideID,int TrackID,int SectorID);
+Byte *SeekFDI(FDIDisk *D,int Side,int Track,int SideID,int TrackID,int SectorID);
 
 /** LinearFDI() **********************************************/
 /** Seek to given sector by its linear number. Returns      **/
 /** sector address on success or 0 on failure.              **/
 /*************************************************************/
-byte *LinearFDI(FDIDisk *D,int SectorN);
+Byte *LinearFDI(FDIDisk *D,int SectorN);
 
 #ifdef __cplusplus
 }
