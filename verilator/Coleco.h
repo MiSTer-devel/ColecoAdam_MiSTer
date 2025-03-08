@@ -67,7 +67,7 @@ extern "C" {
 #define CV_ALLSPRITE  0x00000800
 #define CV_SGM        0x00001000  /* Super Game Module */
 #define CV_EEPROM     0x00006000  /* Serial EEPROMs:   */
-#define CV_24C08      0x00002000  /*   256-byte EEPROM */
+#define CV_24C08      0x00002000  /*   256-Byte EEPROM */
 #define CV_24C256     0x00004000  /*   32kB EEPROM     */
 #define CV_SRAM       0x00008000  /* 2kB battery-backed SRAM */
 
@@ -113,9 +113,9 @@ extern "C" {
 #define JST_YELLOW    JST_FIREL
 
 /** Variables used to control emulator behavior **************/
-extern byte Verbose;        /* Debug msgs ON/OFF             */
+extern Byte Verbose;        /* Debug msgs ON/OFF             */
 extern int  Mode;           /* Conjunction of CV_* mode bits */
-extern byte UPeriod;        /* Percentage of frames to draw  */
+extern Byte UPeriod;        /* Percentage of frames to draw  */
 
 extern int  ScrWidth;       /* Screen buffer width           */
 extern int  ScrHeight;      /* Screen buffer height          */
@@ -125,7 +125,7 @@ extern void *ScrBuffer;     /* If screen buffer allocated,   */
 
 //extern Z80 CPU;                       /* CPU registers+state */
 //extern TMS9918 VDP;                   /* TMS9918 VDP state   */
-//extern byte *VRAM;                    /* Video RAM           */
+//extern Byte *VRAM;                    /* Video RAM           */
 
 extern const char *HomeDir;           /* Home directory      */
 extern const char *SndName;           /* Soundtrack log file */
@@ -134,9 +134,9 @@ extern const char *SavName;           /* EEPROM save file    */
 extern const char *PrnName;           /* Printer redir. file */
 extern const char *PalName;           /* Palette file        */
 
-extern byte ExitNow;                  /* 1: Exit emulator    */
-extern byte AdamROMs;                 /* 1: Adam ROMs loaded */
-extern byte PCBTable[];
+extern Byte ExitNow;                  /* 1: Exit emulator    */
+extern Byte AdamROMs;                 /* 1: Adam ROMs loaded */
+extern Byte PCBTable[];
 
 extern FDIDisk Disks[MAX_DISKS];      /* Adam disk drives    */
 extern FDIDisk Tapes[MAX_TAPES];      /* Adam tape drives    */
@@ -172,14 +172,14 @@ void MenuColeco(void);
 int LoadFile(const char *FileName);
 
 /** LoadROM() ************************************************/
-/** Load given cartridge ROM file. Returns number of bytes  **/
+/** Load given cartridge ROM file. Returns number of Bytes  **/
 /** on success, 0 on failure.                               **/
 /*************************************************************/
 int LoadROM(const char *Cartridge);
 
 /** LoadCHT() ************************************************/
 /** Load cheats from .CHT file. Cheat format is either      **/
-/** XXXX-XX (one byte) or XXXX-XXXX (two bytes). Returns    **/
+/** XXXX-XX (one Byte) or XXXX-XXXX (two Bytes). Returns    **/
 /** the number of cheats on success, 0 on failure.          **/
 /*************************************************************/
 int LoadCHT(const char *Name);
@@ -223,27 +223,27 @@ void ChangePrinter(const char *FileName);
 /** Printer() ************************************************/
 /** Send a character to the printer.                        **/
 /*************************************************************/
-void Printer(byte V);
+void Printer(Byte V);
 
 /** ChangeDisk() *********************************************/
 /** Change disk image in a given drive. Closes current disk **/
 /** image if Name=0 was given. Creates a new disk image if  **/
 /** Name="" was given. Returns 1 on success or 0 on failure.**/
 /*************************************************************/
-byte ChangeDisk(byte N,const char *FileName);
+Byte ChangeDisk(Byte N,const char *FileName);
 
 /** ChangeTape() *********************************************/
 /** Change tape image in a given drive. Closes current tape **/
 /** image if Name=0 was given. Creates a new tape image if  **/
 /** Name="" was given. Returns 1 on success or 0 on failure.**/
 /*************************************************************/
-byte ChangeTape(byte N,const char *FileName);
+Byte ChangeTape(Byte N,const char *FileName);
 
 /** SaveTape() ***********************************************/
 /** Save tape inserted into given tape drive. Returns the   **/
-/** number of saved bytes on success, 0 on failure.         **/
+/** number of saved Bytes on success, 0 on failure.         **/
 /*************************************************************/
-int SaveTape(byte N,const char *TapeName);
+int SaveTape(Byte N,const char *TapeName);
 
 /** SetScreenDepth() *****************************************/
 /** Set screen depth for the display drivers. Returns 1 on  **/
@@ -304,7 +304,7 @@ void TrashMachine(void);
 /** SetColor() ***********************************************/
 /** Set color N (0..15) to (R,G,B).                         **/
 /************************************ TO BE WRITTEN BY USER **/
-int SetColor(byte N,byte R,byte G,byte B);
+int SetColor(Byte N,Byte R,Byte G,Byte B);
 
 /** Joystick() ***********************************************/
 /** This function is called to poll joysticks. It should    **/

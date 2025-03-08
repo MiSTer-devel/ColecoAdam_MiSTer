@@ -1,5 +1,8 @@
 #pragma once
 
+#include <verilated.h>
+
+
 #include <string>
 #ifndef _MSC_VER
 #include "imgui_impl_sdl.h"
