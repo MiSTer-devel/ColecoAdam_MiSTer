@@ -1,6 +1,7 @@
 # Status
 
-Where testing and bug fixing stood on 2026-09-13. None of this work is committed yet.
+Where testing and bug fixing stood on 2026-09-13. The work is committed on branch
+`adam-accuracy-fixes`.
 `CLAUDE.md` explains how to build, run and compare.
 
 ## In short
@@ -29,7 +30,9 @@ Where testing and bug fixing stood on 2026-09-13. None of this work is committed
 - A simulator harness bug that crashed on any write to drives 2-7 is fixed as well.
 - One cartridge difference is still unexplained (Cosmo Fighter II's missing star field). Two ADAM
   test cartridges show a black screen, before and after the fixes.
-- Nothing has been built with Quartus or tried on a MiSTer; there is no Quartus on this machine.
+- Built with Quartus 17.0.2 and tried on a DE10-Nano on 2026-09-13. Every check that was
+  scripted passed; the RAM test cartridges still need checking by eye. Results are in
+  `HANDOFF.md` section 3a.
 
 ## Test results
 
@@ -243,13 +246,12 @@ published privately at https://claude.ai/code/artifact/7b51e7a0-f8a9-4861-95a8-b
   hardware; not yet investigated.
 - **ColEm can't be the reference for ADAM-only cartridges.** It switches to ColecoVision mode
   whenever a cartridge is loaded, so those are checked by eye.
-- **Hardware not tried.** Worth checking on a MiSTer:
-  - Super Cobra
-  - a Crown Jewels game
-  - an SGM title
-  - ADAM Diagnostic through cartridge load
-  - SmartWRITER and a disk boot, since the M1 wait slows the CPU to its real speed and AdamNet
-    timing on hardware is the thing simulation can't vouch for
+- **Hardware checks still to do** (the rest passed on 2026-09-13, `HANDOFF.md` section 3a):
+  - the RAM test cartridge colours at 64K, 256K and None, on the monitor, since screenshots
+    of them came back stale
+  - Buck Rogers' high score save, played to the end
+  - a Crown Jewels game and an SGM title, which aren't on the test MiSTer's SD card
+  - the rest of the ADAM Diagnostic checkout, OSD Reset back to SmartWRITER, and a T-DOS RAM disk
 - **README's known bugs** (not re-checked): a bad character on the first keypress, reset not
   quite like an ADAM, no printer, key repeat, tape/disk writes. Disk writes were fixed in commit
   1029386.
@@ -274,6 +276,7 @@ published privately at https://claude.ai/code/artifact/7b51e7a0-f8a9-4861-95a8-b
 | Debug output | `rtl/bram.sv`, `rtl/dpramv.sv`, `rtl/cv_adamnet.sv`, `rtl/track_loader_adam.sv` | Per-access `$display` behind `SIM_DEBUG` |
 | Comparison | `verilator/compare/` | Framework, ColEm harness and patches, cartridge/ADAM/library scripts, report builder |
 | Docs | `CLAUDE.md`, `STATUS.md`, `docs/` | Project guide, this file, collected manuals and schematics |
+| Hardware tests | `hardware_tests/` | MGL files, OSD configs and scripts for testing on a MiSTer |
 
 Keep `ColEm56-Source/`, `verilator/compare/work/`, `verilator/SoftwareFromMiSTer/`,
 `verilator/roms colecovision/`, `verilator/adam.tar` and the loose `.dsk`/`.zip` files in
@@ -308,7 +311,8 @@ Keep `ColEm56-Source/`, `verilator/compare/work/`, `verilator/SoftwareFromMiSTer
 The full work list, including tape writes, expansion RAM, the test programs and SuperADAM
 features, is in `TODO.md`.
 
-1. Build with Quartus and try the checks under "Hardware not tried" on a MiSTer.
+1. Finish the hardware checks listed under "Still open". The kit in `hardware_tests/` repeats
+   the rest.
 2. Run `library_scenarios.sh` over `E.O.S/Games` (about 2 hours), then the rest of `E.O.S/`
    and `CP-M & T-DOS/`, and triage whatever doesn't boot or match.
 3. Chase Cosmo Fighter II with a CPU trace comparison.

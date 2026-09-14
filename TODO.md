@@ -5,17 +5,25 @@ Work list as of 2026-09-13. `STATUS.md` has the background and evidence for the 
 
 ## 1. Try the September fixes on a MiSTer
 
-- [ ] Build with Quartus; there is no Quartus on the dev Mac.
-- [ ] Console mode:
-  - [ ] Super Cobra: opening screen and attract demo, for the RAM mirroring.
-  - [ ] A Crown Jewels game: text screens centred.
-  - [ ] An SGM title: 24K RAM through port 53h, and AY sound.
-- [ ] Computer mode:
-  - [ ] SmartWRITER typing.
-  - [ ] A disk boot (Donkey Kong Jr) and a tape boot (Troll's Tale). The M1 WAIT fix slows
-    the CPU to its real speed, and AdamNet timing on hardware is what simulation can't vouch for.
-- [ ] Load the ADAM Diagnostic cartridge in Computer mode: it should start. OSD Reset should
-  return to SmartWRITER.
+- [x] Build with Quartus: done 2026-09-13 with 17.0.2 on the Linux machine. It fits, at 84% of
+  RAM blocks, and meets timing.
+- Hardware results from 2026-09-13 are in `HANDOFF.md` section 3a; the kit is in `hardware_tests/`.
+- Console mode:
+  - [x] Super Cobra: opening screen and attract demo, for the RAM mirroring.
+  - [ ] A Crown Jewels game: text screens centred. Not on the test MiSTer's SD card.
+  - [ ] An SGM title: 24K RAM through port 53h, and AY sound. None on the SD card.
+- Computer mode:
+  - [x] SmartWRITER typing, including the first key.
+  - [x] A disk boot (Donkey Kong Jr) and a tape boot (Troll's Tale), plus Buck Rogers from tape.
+  - [x] Tape save and read-back.
+  - [x] Keyboard in the Tape-Disk Verification cartridge.
+  - [x] T-DOS at 256K boots to `A0>`.
+- [x] Load the ADAM Diagnostic cartridge in Computer mode: it starts, and the right button
+  starts the checkout.
+  - [ ] Run the checkout through, and check that OSD Reset returns to SmartWRITER.
+- [ ] RAM test cartridges at 64K, 256K and None: check the colours on the monitor. MiSTer
+  screenshots of them were stale.
+- [ ] Buck Rogers high score save, played to the end on hardware.
 - [ ] Commit in pieces once hardware looks right:
   - [ ] the simulator
   - [ ] the comparison framework

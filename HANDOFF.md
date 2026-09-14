@@ -1,8 +1,8 @@
 # Handoff: testing branch `adam-accuracy-fixes` on the MiSTer
 
 Branched from `master` (d7bc66b) on 2026-09-13. Every change here was checked in the Verilator
-simulator, often against ColEm 5.6, but nothing has been built with Quartus or run on a
-DE10-Nano. This document is the plan for that. `STATUS.md` has the evidence for each fix,
+simulator, often against ColEm 5.6. It was then built with Quartus and tested on a DE10-Nano on
+2026-09-13; results are in section 3a. This document is the plan for that testing. `STATUS.md` has the evidence for each fix,
 `TODO.md` the open work, and `CLAUDE.md` how to build and run the simulator.
 
 ## 1. Build
@@ -11,6 +11,17 @@ DE10-Nano. This document is the plan for that. `STATUS.md` has the evidence for 
 2. Check the fitter report for memory. The expansion RAM grew from two 32K blocks to one 256K
    block, about 1.5 Mbit more M10K. If it doesn't fit, see "Backing a fix out" below.
 3. Copy `output_files/ColecoAdam.rbf` to the MiSTer and load it.
+
+Built 2026-09-13 with Quartus 17.0.2 Lite: no errors, no critical warnings, and timing met
+(worst-case setup slack 0.301 ns, hold 0.246 ns).
+
+| Resource | master (July) | This branch |
+|---|---|---|
+| RAM blocks | 242 / 553 (44%) | 466 / 553 (84%) |
+| Block memory bits | 1,803,749 (32%) | 3,638,757 (64%) |
+| Logic (ALMs) | 35% | 36% |
+
+It fits, but there is no room left in block RAM for 512K or 1MB expansion.
 
 No files were added to or removed from `files.qip`.
 
@@ -40,19 +51,21 @@ Simulator-only changes (no effect on the FPGA):
 
 Quickest and most important first. Note anything that differs from "Expect".
 
+Results from the DE10-Nano run on 2026-09-13 are ticked below and summarised in section 3a.
+
 ### Console mode (OSD Mode = Console)
 
-- [ ] **Frogger or Donkey Kong** plays normally, at a plausible speed (fix 3).
-- [ ] **Super Cobra** opening screen has no garbage and the attract demo flies (fix 1).
+- [x] **Frogger or Donkey Kong** plays normally, at a plausible speed (fix 3).
+- [x] **Super Cobra** opening screen has no garbage and the attract demo flies (fix 1).
 - [ ] **Search for the Stolen Crown Jewels I** text screens are centred (fix 2).
 - [ ] **An SGM title** still runs and has AY sound (fix 1, port 53h).
 
 ### Computer mode (OSD Mode = Computer, Expansion RAM = 64K)
 
-- [ ] **SmartWRITER** boots; typing works, including the first key.
-- [ ] **Disk boot:** Donkey Kong Jr (ADAM) disk loads and plays (fix 3, AdamNet timing).
-- [ ] **Tape boot:** Troll's Tale data pack loads (fix 8 must not break reads).
-- [ ] **Tape save** (fix 8), using a copy of a blank data pack:
+- [x] **SmartWRITER** boots; typing works, including the first key.
+- [x] **Disk boot:** Donkey Kong Jr (ADAM) disk loads and plays (fix 3, AdamNet timing).
+- [x] **Tape boot:** Troll's Tale data pack loads (fix 8 must not break reads).
+- [x] **Tape save** (fix 8), using a copy of a blank data pack:
   1. In SmartWRITER, press Escape (word processor) and type a line.
   2. Press STORE/GET (PgDn), then smart key V (STORE WK-SPACE), then III (DRIVE A).
   3. Type a name and press VI.
@@ -60,11 +73,11 @@ Quickest and most important first. Note anything that differs from "Expect".
   - Reset, then STORE/GET → VI (GET) → III: the file is listed.
 - [ ] **Buck Rogers Super Game** from its data pack: finish a game, enter initials, choose DONE?.
   The high score saves and the game carries on. This is the original bug report.
-- [ ] **Cartridge reset** (fix 4): load `SoftwareFromMiSTer/adam_carts/ADAM Diagnostic (1982)
+- [x] **Cartridge reset** (fix 4): load `SoftwareFromMiSTer/adam_carts/ADAM Diagnostic (1982)
   (Coleco).rom`. Expect "ADAM CHECKOUT CARTRIDGE", then a CHECKOUT/SKIP menu. The right
   controller button starts the checkout ("MEMORY MODULE TEST"). Run the tests and note any
   failures. OSD Reset should then bring up SmartWRITER.
-- [ ] **Keyboard in an ADAM cartridge** (fix 11): load `ADAM Tape-Disk Verification Rev. 1`.
+- [x] **Keyboard in an ADAM cartridge** (fix 11): load `ADAM Tape-Disk Verification Rev. 1`.
   Press lowercase `c`. Expect the "CHANGING CONFIGURATION" screen (start and end address,
   function keys select tape and disk drives), which is what simulation shows. Before this
   branch, keys did nothing.
@@ -82,8 +95,39 @@ Quickest and most important first. Note anything that differs from "Expect".
   | None | black | black |
 
   Red means the upper window failed, magenta the lower window.
-- [ ] **T-DOS** (`CP-M & T-DOS/Drivers/M.I.B. 3 Drivers - T-DOS v4.58`) boots to `A0>` at 256K.
+- [x] **T-DOS** (`CP-M & T-DOS/Drivers/M.I.B. 3 Drivers - T-DOS v4.58`) boots to `A0>` at 256K.
   If you can, check that its RAM disk appears and holds files.
+
+## 3a. Hardware results (2026-09-13)
+
+Core `ColecoAdam_20260913_accuracy.rbf` on a DE10-Nano, driven remotely with the MGL files,
+scripts and virtual keyboard and pad in `hardware_tests/`. Results were judged from MiSTer
+screenshots.
+
+| Check | Result |
+|---|---|
+| Frogger, Console mode | Pass: attract demo runs. Speed not judged by eye |
+| Super Cobra, Console mode | Pass: clean opening screen, attract demo flies |
+| Donkey Kong Jr cartridge, Console mode | Pass: game options screen |
+| SmartWRITER boot and typing | Pass: "hello tape" typed correctly, first key included |
+| DK Jr Super Game disk boot | Pass: loads to the player selection screen. Not played |
+| Troll's Tale tape boot | Pass: first scene within 40 s |
+| Buck Rogers Super Game tape boot | Pass: player selection screen |
+| Tape save (fix 8) | Pass: blank data pack changed by 1,050 bytes, as in simulation; holds "test" and "hello tape" |
+| Tape read-back | Pass: after a reboot, GET on drive A lists "test" |
+| Cartridge reset (fix 4) | Pass: ADAM Diagnostic shows CHECKOUT/SKIP; the right button (pad A) goes to MEMORY MODULE TEST |
+| Keyboard in an ADAM cartridge (fix 11) | Pass: lowercase `c` opens CHANGING CONFIGURATION |
+| T-DOS 4.58 at 256K | Pass: `A0>` prompt with smart keys |
+| RAM test cartridges, 64K/256K/None (fixes 5, 6) | Not judged: screenshots came back stale (see below) |
+
+Not done:
+- **RAM test cartridge colours.** Every screenshot of `ramtest.rom` and `banks.rom` was a stale,
+  byte-identical 960x90 capture of SmartWRITER, from 3 s to 20 s after loading. The Diagnostic and
+  Tape-Disk Verification cartridges load through the same kind of MGL and screenshot correctly,
+  so this says nothing about the core either way. Check the colour on the monitor.
+- **Buck Rogers high score save.** It needs a game played to the end.
+- **Crown Jewels text centring and an SGM title.** Neither is on the MiSTer's SD card.
+- **Rest of the Diagnostic checkout, OSD Reset back to SmartWRITER, and T-DOS RAM disk.**
 
 ## 4. Backing a fix out
 
@@ -129,7 +173,8 @@ The simulator and comparison framework need those local files; see `CLAUDE.md`.
 
 ## 7. Where to pick up
 
-- Record the hardware results against section 3, and fix or back out whatever fails.
+- Finish the hardware checks listed under "Not done" in section 3a. Nothing tested so far failed,
+  so no fix has been backed out.
 - Open work is in `TODO.md`:
   - 512K/1MB expansion in SDRAM
   - Cosmo Fighter II
