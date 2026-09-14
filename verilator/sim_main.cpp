@@ -29,6 +29,7 @@
 #include "sim_audio.h"
 #include "sim_input.h"
 #include "sim_clock.h"
+#include "sim_adam_keys.h"
 
 #include "../imgui/imgui_memory_editor.h"
 #include "../imgui/ImGuiFileDialog.h"
@@ -39,6 +40,9 @@
 #include <iterator>
 #include <string>
 #include <iomanip>
+#include <vector>
+#include <chrono>
+#include <algorithm>
 using namespace std;
 
 // Simulation control
@@ -46,6 +50,7 @@ using namespace std;
 int initialReset = 48;
 bool run_enable = 1;
 bool adam_mode= 1;
+int exp_ram_mode = 0;   // memory expander for sim.v exp_ram: 0 = 64K, 1 = 256K (port 42h banks), 2 = none
 int batchSize = 150000;
 //int batchSize = 100;
 bool single_step = 0;
@@ -322,10 +327,14 @@ int verilate() {
                         fprintf(stderr,"soft_reset_time %ld initialReset %x\n",soft_reset_time,initialReset);
                 }
 
+                // Hold reset while a ROM downloads, like ColecoAdam.sv does
+                static bool was_downloading = false;
+                bool downloading = bus.HasQueue() || *bus.ioctl_download;
                 // Assert reset during startup
-                if (main_time < initialReset) { VERTOPINTERN->reset = 1; }
-                // Deassert reset after startup
-                if (main_time == initialReset) { VERTOPINTERN->reset = 0; }
+                if (main_time < initialReset || downloading) { VERTOPINTERN->reset = 1; }
+                // Deassert reset after startup, or when a download finishes
+                if (main_time >= initialReset && !downloading && (main_time == initialReset || was_downloading)) { VERTOPINTERN->reset = 0; }
+                was_downloading = downloading;
 
                 // Clock dividers
                 clk_sys.Tick();
@@ -333,6 +342,7 @@ int verilate() {
                 // Set system clock in core
                 VERTOPINTERN->clk_sys = clk_sys.clk;
                 VERTOPINTERN->adam = adam_mode;
+                VERTOPINTERN->exp_ram = exp_ram_mode;
 
                 // Simulate both edges of system clock
                 if (clk_sys.clk != clk_sys.old) {
@@ -539,6 +549,254 @@ int verilate() {
         return 0;
 }
 
+// Command line options
+// --------------------
+bool headless = false;          // --headless: no window, exit after --frames
+int run_frames = 0;             // --frames N: exit after N video frames (0 = never)
+std::string cart_file;          // --cart FILE
+std::string shot_dir = ".";     // --outdir DIR
+std::vector<int> shot_frames;   // --shots F1,F2,...
+int shot_every = 0;             // --every K
+bool exit_requested = false;
+
+struct KeyPress { int bit; int frame; int length; };
+std::vector<KeyPress> key_presses;      // --press KEY@FRAME[:LEN]
+
+// Adam media and keyboard
+std::string disk_file[4], tape_file[4];         // --disk N FILE, --tape N FILE
+const int kKeyGap = 8;                          // frames per typed key (colem_ref uses the same)
+const int kKeyHold = 4;                         // frames a typed key stays down
+struct PS2Event { int frame; int code; bool pressed; };
+std::vector<PS2Event> ps2_events;               // --type TEXT@FRAME, --key NAME@FRAME
+size_t ps2_next = 0;
+
+// joystick_0 bit for a key name, in the order of the core's "J," CONF_STR entry
+int keyBit(const std::string& key) {
+        static const char* names[] = { "right", "left", "down", "up", "fire1", "fire2", "star", "pound",
+                                       "0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "purple", "blue" };
+        for (int i = 0; i < 20; i++) {
+                if (key == names[i]) { return i; }
+        }
+        return -1;
+}
+
+uint32_t scriptedJoystick(int frame) {
+        uint32_t bits = 0;
+        for (const KeyPress& p : key_presses) {
+                if (frame >= p.frame && frame < p.frame + p.length) { bits |= 1UL << p.bit; }
+        }
+        return bits;
+}
+
+// Adam key names; the same list as colem_ref's --key
+int adamKeyName(const std::string& name) {
+        static const struct { const char* name; int code; } keys[] = {
+                { "enter", 0x0D }, { "esc", 0x1B }, { "bs", 0x08 }, { "tab", 0x09 }, { "space", 0x20 },
+                { "up", 0xA0 }, { "right", 0xA1 }, { "down", 0xA2 }, { "left", 0xA3 }, { "home", 0x80 },
+                { "f1", 0x81 }, { "f2", 0x82 }, { "f3", 0x83 }, { "f4", 0x84 }, { "f5", 0x85 }, { "f6", 0x86 },
+                { "wildcard", 0x90 }, { "undo", 0x91 }, { "move", 0x92 }, { "store", 0x93 },
+                { "insert", 0x94 }, { "print", 0x95 }, { "clear", 0x96 }, { "delete", 0x97 },
+        };
+        for (const auto& k : keys) {
+                if (name == k.name) { return k.code; }
+        }
+        return -1;
+}
+
+// Queue the PS/2 make/break events that type one Adam key code at a frame
+bool queueAdamKey(int code, int frame) {
+        int ps2 = adam_ps2_keys[code & 0xFF];
+        if (!ps2) { return false; }
+        int key = ps2 & 0x1FF;
+        bool shift = ps2 & 0x200;
+        if (shift) { ps2_events.push_back({ frame, 0x12, true }); }
+        ps2_events.push_back({ frame, key, true });
+        ps2_events.push_back({ frame + kKeyHold, key, false });
+        if (shift) { ps2_events.push_back({ frame + kKeyHold, 0x12, false }); }
+        return true;
+}
+
+// Present queued PS/2 events on ps2_key, spaced out so the core sees every toggle of bit 10
+void feedPS2() {
+        static int gap = 0;
+        static bool toggle = false;
+        if (gap > 0) { gap--; return; }
+        if (ps2_next >= ps2_events.size() || ps2_events[ps2_next].frame > video.count_frame) { return; }
+        const PS2Event& e = ps2_events[ps2_next++];
+        toggle = !toggle;
+        VERTOPINTERN->ps2_key = e.code | (e.pressed << 9) | (toggle << 10);
+        gap = 20000;
+}
+
+// Run one verilate() step, then apply --press, --shots and --frames when a new video frame starts
+int last_frame = 0;
+// SIM_ADDR_PROFILE=N samples the Z80 address bus every N steps and prints the busiest addresses at
+// the end of a headless run: a cheap way to see where a program is looping, and on what.
+static int addr_profile_every = 0;
+static long addr_profile_step = 0;
+static std::vector<unsigned long> addr_hist;
+
+void stepSim() {
+        feedPS2();
+        verilate();
+        if (addr_profile_every > 0 && ++addr_profile_step % addr_profile_every == 0) {
+                addr_hist[VERTOPINTERN->emu__DOT__console__DOT__adamnet__DOT__z80_addr]++;
+        }
+        if (video.count_frame == last_frame) { return; }
+        last_frame = video.count_frame;
+
+        if (headless) { VERTOPINTERN->joystick_0 = scriptedJoystick(last_frame); }
+
+        bool shot = shot_every > 0 && last_frame % shot_every == 0;
+        for (int f : shot_frames) {
+                if (f == last_frame) { shot = true; }
+        }
+        if (shot) {
+                char name[32];
+                snprintf(name, sizeof(name), "/frame_%05d.ppm", last_frame);
+                std::string path = shot_dir + name;
+                if (!video.SavePPM(path.c_str())) { fprintf(stderr, "Cannot write %s\n", path.c_str()); }
+        }
+
+        if (run_frames > 0 && last_frame >= run_frames) { exit_requested = true; }
+}
+
+void usage(const char* prog) {
+        fprintf(stderr,
+                "Usage: %s [options]\n"
+                "  --cart FILE            load a cartridge (.col/.rom/.bin)\n"
+                "  --console              ColecoVision console mode\n"
+                "  --adam                 Adam computer mode (default)\n"
+                "  --exp-ram 64|256|0     memory expander: 64K (default), 256K in port 42h banks, or none\n"
+                "  --headless             run without a window; requires --frames\n"
+                "  --frames N             exit after N video frames\n"
+                "  --shots F1,F2,...      save these frames as DIR/frame_NNNNN.ppm\n"
+                "  --every K              save every Kth frame\n"
+                "  --outdir DIR           where to save frames (default .)\n"
+                "  --press KEY@FRAME[:N]  hold KEY on controller 1 for N frames (default 8)\n"
+                "                         KEY: 0-9 star pound up down left right fire1 fire2 purple blue\n"
+                "  --disk N FILE          mount a floppy image in drive N (1-4); writes go back to FILE\n"
+                "  --tape N FILE          mount a tape image in drive N (1-4); writes go back to FILE\n"
+                "                         (without --disk/--tape, adam.dsk and adam.ddp are mounted if present)\n"
+                "  --type TEXT@FRAME      type TEXT on the Adam keyboard from FRAME, 8 frames per key (\\n = Return)\n"
+                "  --key NAME@FRAME       press one Adam key: enter esc bs tab space up down left right home\n"
+                "                         f1-f6 undo wildcard move store insert print clear delete\n",
+                prog);
+}
+
+void parseArgs(int argc, char** argv) {
+        for (int i = 1; i < argc; i++) {
+                std::string arg = argv[i];
+                auto value = [&]() -> std::string {
+                        if (i + 1 >= argc) { fprintf(stderr, "%s needs a value\n", arg.c_str()); exit(1); }
+                        return argv[++i];
+                };
+
+                if (arg == "--help" || arg == "-h") { usage(argv[0]); exit(0); }
+                else if (arg == "--cart") { cart_file = value(); }
+                else if (arg == "--console") { adam_mode = 0; }
+                else if (arg == "--adam") { adam_mode = 1; }
+                else if (arg == "--exp-ram") {
+                        std::string v = value();
+                        exp_ram_mode = v == "256" ? 1 : (v == "0" || v == "none") ? 2 : 0;
+                }
+                else if (arg == "--headless") { headless = true; }
+                else if (arg == "--frames") { run_frames = atoi(value().c_str()); }
+                else if (arg == "--every") { shot_every = atoi(value().c_str()); }
+                else if (arg == "--outdir") { shot_dir = value(); }
+                else if (arg == "--shots") {
+                        std::stringstream list(value());
+                        std::string frame;
+                        while (std::getline(list, frame, ',')) { shot_frames.push_back(atoi(frame.c_str())); }
+                }
+                else if (arg == "--press") {
+                        std::string spec = value();
+                        size_t at = spec.find('@');
+                        KeyPress p;
+                        p.bit = at == std::string::npos ? -1 : keyBit(spec.substr(0, at));
+                        if (p.bit < 0) { fprintf(stderr, "Bad --press %s\n", spec.c_str()); exit(1); }
+                        p.frame = atoi(spec.c_str() + at + 1);
+                        size_t colon = spec.find(':', at);
+                        p.length = colon == std::string::npos ? 8 : atoi(spec.c_str() + colon + 1);
+                        key_presses.push_back(p);
+                }
+                else if (arg == "--disk" || arg == "--tape") {
+                        int n = atoi(value().c_str());
+                        std::string file = value();
+                        if (n < 1 || n > 4) { fprintf(stderr, "%s drive must be 1-4\n", arg.c_str()); exit(1); }
+                        (arg == "--disk" ? disk_file : tape_file)[n - 1] = file;
+                }
+                else if (arg == "--type" || arg == "--key") {
+                        std::string spec = value();
+                        size_t at = spec.rfind('@');
+                        if (at == std::string::npos) { fprintf(stderr, "Bad %s %s\n", arg.c_str(), spec.c_str()); exit(1); }
+                        int frame = atoi(spec.c_str() + at + 1);
+                        std::string text = spec.substr(0, at);
+                        if (arg == "--key") {
+                                int code = adamKeyName(text);
+                                if (code < 0) { fprintf(stderr, "Unknown key %s\n", text.c_str()); exit(1); }
+                                queueAdamKey(code, frame);
+                        }
+                        else {
+                                int slot = 0;
+                                for (size_t i = 0; i < text.size(); i++, slot++) {
+                                        int c = (unsigned char)text[i];
+                                        if (c == '\\' && i + 1 < text.size() && text[i + 1] == 'n') { c = 0x0D; i++; }
+                                        if (!queueAdamKey(c, frame + slot * kKeyGap)) { fprintf(stderr, "Cannot type '%c'\n", c); exit(1); }
+                                }
+                        }
+                }
+                else if (arg[0] == '+') { continue; }   // Verilator +args
+                else { fprintf(stderr, "Unknown option %s\n", arg.c_str()); usage(argv[0]); exit(1); }
+        }
+
+        if (headless && run_frames <= 0) { fprintf(stderr, "--headless needs --frames\n"); exit(1); }
+        if (!cart_file.empty()) {
+                FILE* f = fopen(cart_file.c_str(), "rb");
+                if (!f) { fprintf(stderr, "Cannot open cartridge %s\n", cart_file.c_str()); exit(1); }
+                fclose(f);
+        }
+        for (int i = 0; i < 8; i++) {
+                const std::string& file = i < 4 ? disk_file[i] : tape_file[i - 4];
+                if (file.empty()) { continue; }
+                FILE* f = fopen(file.c_str(), "r+b");
+                if (!f) { fprintf(stderr, "Cannot open %s for reading and writing\n", file.c_str()); exit(1); }
+                fclose(f);
+        }
+        std::stable_sort(ps2_events.begin(), ps2_events.end(),
+                         [](const PS2Event& a, const PS2Event& b) { return a.frame < b.frame; });
+}
+
+int runHeadless() {
+        video.InitialiseHeadless();
+        if (const char* e = getenv("SIM_ADDR_PROFILE")) {
+                addr_profile_every = atoi(e);
+                addr_hist.assign(65536, 0);
+        }
+        VERTOPINTERN->joystick_0 = scriptedJoystick(0);
+
+        auto start = std::chrono::steady_clock::now();
+        while (!exit_requested) { stepSim(); }
+        double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+
+        if (addr_profile_every > 0) {
+                std::vector<int> order(65536);
+                for (int i = 0; i < 65536; i++) { order[i] = i; }
+                std::partial_sort(order.begin(), order.begin() + 24, order.end(),
+                                  [](int a, int b) { return addr_hist[a] > addr_hist[b]; });
+                unsigned long total = 0;
+                for (unsigned long n : addr_hist) { total += n; }
+                printf("address profile (%lu samples):\n", total);
+                for (int i = 0; i < 24 && addr_hist[order[i]]; i++) {
+                        printf("  %04X %6.2f%%\n", order[i], 100.0 * addr_hist[order[i]] / total);
+                }
+        }
+
+        printf("frames=%d main_time=%llu seconds=%.1f fps=%.2f\n", last_frame, (unsigned long long)main_time, seconds, last_frame / seconds);
+        top->final();
+        return 0;
+}
+
 unsigned char mouse_clock = 0;
 unsigned char mouse_clock_reduce = 0;
 unsigned char mouse_buttons = 0;
@@ -552,6 +810,7 @@ int main(int argc, char** argv, char** env) {
         // Create core and initialise
         top = new Vemu();
         Verilated::commandArgs(argc, argv);
+        parseArgs(argc, argv);
         Verilated::traceEverOn(true);
 ROMPage[0] = (Byte *)&VERTOPINTERN->emu__DOT__ram__DOT__ram;
 ROMPage[1] = ROMPage[0]+0x2000;
@@ -619,17 +878,34 @@ LoadFDI(&Disks[4],"adam.ddp",FMT_DDP);
         blockdevice.sd_ack = &VERTOPINTERN->sd_ack;
         blockdevice.sd_buff_addr= &VERTOPINTERN->sd_buff_addr;
         blockdevice.sd_buff_dout= &VERTOPINTERN->sd_buff_dout;
-        blockdevice.sd_buff_din[0]= &VERTOPINTERN->sd_buff_din[0];
-        blockdevice.sd_buff_din[1]= &VERTOPINTERN->sd_buff_din[1];
+        // every drive writes through its own buffer: disks 0-3, tapes 4-7 (only 0 and 1 used to be
+        // wired, so the first write to drive 2-7 dereferenced NULL)
+        for (int i = 0; i < 8; i++) blockdevice.sd_buff_din[i] = &VERTOPINTERN->sd_buff_din[i];
         blockdevice.sd_buff_wr= &VERTOPINTERN->sd_buff_wr;
         blockdevice.img_mounted= &VERTOPINTERN->img_mounted;
         blockdevice.img_readonly= &VERTOPINTERN->img_readonly;
         blockdevice.img_size= &VERTOPINTERN->img_size;
 
+        // Media from the command line; otherwise adam.dsk and adam.ddp from the current directory
+        bool media = false;
+        for (int i = 0; i < 4; i++) {
+                if (!disk_file[i].empty()) { blockdevice.MountDisk(disk_file[i], i); media = true; }
+                if (!tape_file[i].empty()) { blockdevice.MountDisk(tape_file[i], 4 + i); media = true; }
+        }
+        if (!media) {
+                blockdevice.MountDisk("adam.dsk",0);
+                blockdevice.MountDisk("adam.ddp",4);
+        }
+
+        // Cartridge from the command line; index 1 is the core's "Load CART"
+        if (!cart_file.empty()) { bus.QueueDownload(cart_file, 1, 1); }
+
 
 #ifndef DISABLE_AUDIO
         audio.Initialise();
 #endif
+
+        if (headless) { return runHeadless(); }
 
         // Set up input module
         input.Initialise();
@@ -669,8 +945,6 @@ LoadFDI(&Disks[4],"adam.ddp",FMT_DDP);
         //bus.QueueDownload("floppy.nib",1,0);
         //blockdevice.MountDisk("floppy.nib",0);
         //blockdevice.MountDisk("hd.hdv",1);
-        blockdevice.MountDisk("adam.dsk",0);
-        blockdevice.MountDisk("adam.ddp",4);
 
 #ifdef WIN32
         MSG msg;
@@ -724,7 +998,7 @@ LoadFDI(&Disks[4],"adam.ddp",FMT_DDP);
                 ImGui::Checkbox("Adam", &adam_mode);
                 ImGui::SameLine();
                 if (ImGui::Button("Load ROM"))
-    ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose File", ".rom", ".");
+    ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose File", ".col,.rom,.bin", ".");
 
                 if (ImGui::Button("PRINT MARKER")) { fprintf(stderr,"7F MARKER\n"); fprintf(stdout,"7F MARKER\n");  } ImGui::SameLine();
                 //if (ImGui::Button("Soft Reset")) { fprintf(stderr,"soft reset\n"); soft_reset=1; } ImGui::SameLine();
@@ -742,8 +1016,8 @@ LoadFDI(&Disks[4],"adam.ddp",FMT_DDP);
                 ImGui::Begin("upper ram Editor");
                 mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__upper_ram__DOT__ram, 32768, 0);
                 ImGui::End();
-                ImGui::Begin("lower expansion Editor");
-                mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__lowerexpansion_ram__DOT__mem, 32768, 0);
+                ImGui::Begin("expansion RAM Editor");   // {bank(2), upper window(1), address(15)}
+                mem_edit.DrawContents(&VERTOPINTERN->emu__DOT__expansion_ram__DOT__mem, 262144, 0);
                 ImGui::End();
                 //ImGui::Begin("CHROM Editor");
                 //mem_edit.DrawContents(VERTOPINTERN->emu__DOT__system__DOT__chrom__DOT__mem, 2048, 0);
@@ -878,6 +1152,7 @@ fprintf(stderr,"filePath: %s\n",filePath.c_str());
                 {
                         if (input.inputs[i]) { VERTOPINTERN->joystick_0 |= (1 << i); }
                 }
+                VERTOPINTERN->joystick_0 |= scriptedJoystick(video.count_frame);
                 VERTOPINTERN->joystick_1 = VERTOPINTERN->joystick_0;
 
                 /*VERTOPINTERN->joystick_analog_0 += 1;
@@ -914,14 +1189,15 @@ fprintf(stderr,"filePath: %s\n",filePath.c_str());
 
                 // Run simulation
                 if (run_enable) {
-                        for (int step = 0; step < batchSize; step++) { verilate(); }
+                        for (int step = 0; step < batchSize; step++) { stepSim(); }
                 }
                 else {
-                        if (single_step) { verilate(); }
+                        if (single_step) { stepSim(); }
                         if (multi_step) {
-                                for (int step = 0; step < multi_step_amount; step++) { verilate(); }
+                                for (int step = 0; step < multi_step_amount; step++) { stepSim(); }
                         }
                 }
+                if (exit_requested) { break; }
         }
 
         // Clean up before exit

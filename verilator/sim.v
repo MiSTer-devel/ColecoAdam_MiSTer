@@ -17,6 +17,7 @@ module emu
    input                 soft_reset,
    input                 menu,
    input                 adam,
+   input [1:0]           exp_ram,     // memory expander: 0 = 64K, 1 = 256K (port 42h banks), 2 = none
 
    input [31:0]          joystick_0,
    input [31:0]          joystick_1,
@@ -102,12 +103,6 @@ module emu
 
 );
 
-  initial begin
-    $dumpfile("test.fst");
-    $dumpvars;
-    //$dumpvars(0,TOP.emu.g_TL[0].track_loader_a);
-  end
-
  wire [15:0] joystick_a0 =  joystick_l_analog_0;
 
 wire UART_CTS;
@@ -118,14 +113,15 @@ wire UART_DTR;
 wire UART_DSR;
 
 // CHEAT THE CLOCK TO SPEED IT UP
- reg ce_10m7 = 0;
+// The sim's clk_sys is the 10.7 MHz rate itself, so ce_10m7 is always on. Hardware runs
+// clk_sys at twice that with every other cycle idle; skipping those doubles sim speed.
+ wire ce_10m7 = 1'b1;
  reg ce_5m3 = 0;
  always @(posedge clk_sys) begin
-       reg [1:0] div;
+       reg div;
 
-       div <= div+1'd1;
-       ce_10m7 <= !div[0];
-       ce_5m3  <= !div[1:0];
+       div <= ~div;
+       ce_5m3  <= !div;
  end
 
 /////////////////  Memory  ////////////////////////
@@ -225,7 +221,9 @@ dpramv #(8, 15) ram
     ramb_addr_del <= ramb_addr;
   end
 
+`ifdef SIM_DEBUG
   always @* if (ramb_rd) $display("Readingb %0x: %0x", ramb_addr_del[14:0], ramb_din);
+`endif
   assign ramb_din = ~ramb_addr[15] ? int_ramb_din[0] : int_ramb_din[1];
 
 wire [13:0] vram_a;
@@ -255,15 +253,31 @@ spramv #(14) vram
    wire lowerexpansion_ram_we_n;
    wire [7:0] lowerexpansion_ram_di;
    wire [7:0] lowerexpansion_ram_do;
-  spramv #(15) lowerexpansion_ram
+  // Memory expander, as in ColecoAdam.sv; exp_ram replaces the OSD bits: 0 = 64K, 1 = 256K, 2 = none
+  wire [14:0] expansion_ram_a;
+  wire        expansion_ram_ce_n;
+  wire        expansion_ram_we_n;
+  wire  [7:0] expansion_ram_di;
+  wire  [7:0] expansion_ram_do;
+  wire  [7:0] expansion_bank;
+
+  wire        exp_ram_none  = exp_ram[1];
+  wire  [1:0] exp_ram_bank  = exp_ram[0] ? expansion_bank[1:0] : 2'b00;
+  wire        exp_ram_upper = ~expansion_ram_ce_n;
+  wire        exp_ram_we    = exp_ram_upper ? ~expansion_ram_we_n
+                                            : ~(lowerexpansion_ram_we_n | lowerexpansion_ram_ce_n);
+  wire  [7:0] exp_ram_q;
+  spramv #(18) expansion_ram
     (
      .clock(clk_sys),
-     .address(lowerexpansion_ram_a),
-     .wren(ce_10m7 & ~(lowerexpansion_ram_we_n | lowerexpansion_ram_ce_n)),
-     .data(lowerexpansion_ram_do),
-     .q(lowerexpansion_ram_di),
+     .address({exp_ram_bank, exp_ram_upper, exp_ram_upper ? expansion_ram_a : lowerexpansion_ram_a}),
+     .wren(ce_10m7 & exp_ram_we & ~exp_ram_none),
+     .data(exp_ram_upper ? expansion_ram_do : lowerexpansion_ram_do),
+     .q(exp_ram_q),
      .cs(1'b1)
      );
+  assign lowerexpansion_ram_di = exp_ram_none ? 8'hFF : exp_ram_q;
+  assign expansion_ram_di      = exp_ram_none ? 8'hFF : exp_ram_q;
 
 
 wire [14:0] upper_ram_a;
@@ -387,6 +401,13 @@ wire  [7:0] ext_rom_d=8'hff;
 
   logic mode = ~adam;
 
+  // Loading a cartridge in Adam mode acts as the ADAM's cartridge reset switch (see ColecoAdam.sv)
+  reg game_reset = 0;
+  always @(posedge clk_sys) begin
+     if (ioctl_download && ioctl_index[5:0] == 1) game_reset <= 1;
+     else if (soft_reset) game_reset <= 0;
+  end
+
   cv_console
     #
     (
@@ -404,6 +425,7 @@ wire  [7:0] ext_rom_d=8'hff;
      //.dahjeeA_i(extram),
      //.adam(adam),
      .mode(mode),
+     .game_mode_i(game_reset),
 
      .ctrl_p1_i(ctrl_p1),
      .ctrl_p2_i(ctrl_p2),
@@ -437,6 +459,12 @@ wire  [7:0] ext_rom_d=8'hff;
      .cpu_lowerexpansion_ram_ce_n_o(lowerexpansion_ram_ce_n),
      .cpu_lowerexpansion_ram_d_i(lowerexpansion_ram_di),
      .cpu_lowerexpansion_ram_d_o(lowerexpansion_ram_do),
+     .cpu_expansion_ram_a_o(expansion_ram_a),
+     .cpu_expansion_ram_we_n_o(expansion_ram_we_n),
+     .cpu_expansion_ram_ce_n_o(expansion_ram_ce_n),
+     .cpu_expansion_ram_d_i(expansion_ram_di),
+     .cpu_expansion_ram_d_o(expansion_ram_do),
+     .cpu_expansion_bank_o(expansion_bank),
 
      .cpu_upper_ram_a_o(upper_ram_a),
      .cpu_upper_ram_we_n_o(upper_ram_we_n),

@@ -213,6 +213,7 @@ module cv_adamnet
 
   localparam CB_RANGE = PCB_SIZE + (15*DCB_SIZE);
 
+  logic         relocating;   // PCB relocate (03h) in progress: MOVE_PCB keeps the DCB count
   logic [15:0]  pcb_base; /* Base of the PCB/ DCB in memory
                            * The size of the memory segment is
                            * pcb_base + PCB_SIZE + (15*DCB_SIZE) - 1
@@ -346,10 +347,12 @@ module cv_adamnet
       // static void MovePCB(word NewAddr,byte MaxDCB)
       MOVE_PCB: begin
         $display("Adamnet (HDL): MovePCB Address: %x", pcb_addr);
-        pcb_table.pcb_cmd_stat <= CMD_PCB_IDLE;
+        // A relocation keeps the DCB count and acknowledges; a reset starts with 15 DCBs
+        pcb_table.pcb_cmd_stat <= relocating ? (RSP_STATUS | CMD_PCB_SNA) : CMD_PCB_IDLE;
         pcb_table.pcb_ba_lo    <= pcb_addr[7:0];
         pcb_table.pcb_ba_hi    <= pcb_addr[15:8];
-        pcb_table.pcb_max_dcb  <= 15;
+        if (!relocating) pcb_table.pcb_max_dcb <= 15;
+        relocating             <= '0;
 
         for (int i = 0; i < 15; i++) begin
           dcb_table[i].dcb_cmd_stat <= '0;
@@ -382,13 +385,17 @@ module cv_adamnet
                       pcb_table.pcb_cmd_stat <= z80_data_wr | RSP_STATUS;
                     end
                     CMD_PCB_SNA: begin
-                      // Todo: add in movepcb
-                      $display("Adamnet (HDL): Rellocate PCB: %x, %x",PCB_CMD_STAT,RSP_STATUS|CMD_PCB_SNA);
-                      pcb_table.pcb_cmd_stat <= z80_data_wr | RSP_STATUS;
-                      $finish;
+                      // Relocate the PCB to the address just written and reset its DCBs, as
+                      // ColEm's WritePCB does through MovePCB. This used to be a $finish stub.
+                      $display("Adamnet (HDL): Relocate PCB to %x", pcb_addr);
+                      relocating <= '1;
+                      adam_state <= MOVE_PCB;
                     end
                     default: begin
-                      $display("Adamnet (HDL): Unimplemented PCB Operation");
+                      // Software writes 00h and 80h+ here as plain status values; ColEm ignores
+                      // them quietly. The byte is still kept, since it reads back like RAM.
+                      if (z80_data_wr != 8'h00 && !z80_data_wr[7])
+                        $display("Adamnet (HDL): Unimplemented PCB Operation %02x", z80_data_wr);
                       pcb_table.pcb_cmd_stat <= z80_data_wr;
                     end
                   endcase
@@ -412,8 +419,20 @@ module cv_adamnet
           if (dcb_dev_hit_any) begin
             case (dcb_reg)// (pcb_base + PCB_SIZE + DCB_SIZE * dcb_dev))
               DCB_CMD_STAT: begin
+                // A write that isn't a command (00h, or 80h+) must still read back, since the
+                // DCB is RAM on an ADAM (ColEm keeps it in RAM too). Software clears a finished
+                // command by writing 00h and waits for that before issuing the next one: the
+                // Tape-Disk Verification cartridge's keyboard read never started without this.
+                if (z80_wr && (z80_data_wr == 8'h00 || z80_data_wr[7]))
+                  dcb_table[dcb_dev].dcb_cmd_stat <= z80_data_wr;
                 if (|z80_data_wr[6:0] && ~z80_data_wr[7]) begin
                   if (is_kbd[dcb_dev]) begin
+`ifdef ADAMNET_TRACE
+                    if (z80_wr) $display("Adamnet trace: KBD dcb %0d cmd %02x buf %02x%02x len %02x%02x",
+                                         dcb_dev, z80_data_wr,
+                                         dcb_table[dcb_dev].dcb_ba_hi, dcb_table[dcb_dev].dcb_ba_lo,
+                                         dcb_table[dcb_dev].dcb_buf_len_hi, dcb_table[dcb_dev].dcb_buf_len_lo);
+`endif
                     if (z80_rd_lvl) begin
                       kbd_status <= RSP_STATUS;
                       kbd_status_upd <= '1;
@@ -592,8 +611,9 @@ module cv_adamnet
                     end // if (z80_wr)
                   end else if (dcb_cmd_hit[dcb_dev]) begin // if (is_tap[dcb_dev])
                     dcb_table[dcb_dev].dcb_cmd_stat <= RSP_BUSY; // RSP_ACK + 8'h0B;
-                    $display("Adamnet (HDL): %s Unknown device #%d",
-                             z80_data_wr==CMD_READ? "Reading":"Writing", dcb_dev);
+                    $display("Adamnet (HDL): %s Unknown device #%d (dev_num %02x add_code %02x cmd %02x)",
+                             z80_data_wr==CMD_READ? "Reading":"Writing", dcb_dev,
+                             dcb_table[dcb_dev].dcb_dev_num, dcb_table[dcb_dev].dcb_add_code, z80_data_wr);
                   end
                 end // if (|z80_data_wr[6:0] && ~z80_data_wr[7])
               end // case: DCB_CMD_STAT
@@ -665,6 +685,7 @@ module cv_adamnet
       // On reset setup PCB table
       pcb_addr       <= PCB_BASE_INIT;
       adam_state     <= MOVE_PCB;
+      relocating     <= '0;
       adamnet_wait_n <= '1;
       kbd_status     <= RSP_STATUS;
     end
@@ -674,6 +695,7 @@ module cv_adamnet
     // On reset setup PCB table
     pcb_addr       = PCB_BASE_INIT;
     adam_state     = MOVE_PCB;
+    relocating     = '0;
     adamnet_req_n  = '1;
     adamnet_wait_n = '1;
     kbd_status     = RSP_STATUS;
@@ -736,9 +758,7 @@ module cv_adamnet
                {
                 DISK_IDLE,
                 DISK_READ[4],
-                DISK_WRITE[4],
-                TAPE_READ[4],
-                TAPE_WRITE[1]
+                DISK_WRITE[4]
                 } disk_state_t;
 
   disk_state_t disk_state, tape_state;
@@ -819,9 +839,11 @@ module cv_adamnet
     set_lastblock    <= '0;
 
     //if (ramb_wr) $display("Writing to RAM %x: %x  kbd_data %x kbd_sel %x ps2_key %x key_code %c %x shift %x caps %x", ramb_addr, ramb_dout,kbd_data,kbd_sel,ps2_key[8:0],key_code,key_code,shift,caps_lock);
+`ifdef SIM_DEBUG
     if (ramb_wr) $display("Writing to RAM %0x: %0x", ramb_addr, ramb_dout);
     if (ramb_rd_ack) $display("Reading from RAM %0x: %0x", ramb_addr, ramb_din);
     if (|disk_wr) $display("Writing to Disk sec %0x A %0x: %0x", disk_sec, disk_addr, disk_din);
+`endif
 
     case (disk_state)
       DISK_IDLE: begin
@@ -842,7 +864,11 @@ module cv_adamnet
           disk_sec    <= sec<<1;
           disk_dev    <= NUM_DISKS+tapeid;
           done_dev    <= dcb_dev;
-          disk_state  <= TAPE_READ0;
+          // Tape blocks use the same states as disk blocks, without the disk's sector
+          // interleave (disk_active stays low). The old tape-only copy of these states had
+          // no write path: TAPE_WRITE0 was a $finish stub, so on hardware a tape save
+          // never finished and AdamNet stopped serving disks and tapes until reset.
+          disk_state  <= DISK_READ0;
         end
       end // case: DISK_IDLE
       DISK_READ0: begin
@@ -897,7 +923,9 @@ module cv_adamnet
         if (~disk_sector_loaded[disk_dev]) disk_state <= DISK_READ0;
       end
       DISK_WRITE0: begin
+`ifdef SIM_DEBUG
         $display("write0 %0h, %0h", ramb_addr, dcb_counter);
+`endif
         adamnet_req_n <= '0;
         ramb_addr     <= ramb_addr + 1'b1;
         ramb_rd       <= '1;
@@ -906,7 +934,9 @@ module cv_adamnet
       DISK_WRITE1: begin
         ramb_addr    <= ramb_addr;
         int_ramb_addr[0]    <= int_ramb_addr[0];
+`ifdef SIM_DEBUG
         $display("write0 %0h, %0h", ramb_addr, dcb_counter);
+`endif
         // Write up to 512 bytes (might be less)
         disk_addr         <= data_counter;
         disk_din          <= ramb_din;
@@ -946,63 +976,12 @@ module cv_adamnet
         end
       end
       DISK_WRITE3: begin
+`ifdef SIM_DEBUG
         $display("write0 %0h, %0h", ramb_addr, dcb_counter);
+`endif
         ramb_addr     <= ramb_addr + 1'b1;
         ramb_rd       <= '1;
         disk_state    <= DISK_WRITE1;
-      end
-      TAPE_READ0: begin
-        //disk_sector <= disk_sec[31:0];
-        disk_load[disk_dev]   <= '1;
-        adamnet_req_n <= '0;
-        if (disk_sector_loaded[disk_dev]) begin
-          $display("Adamnet (HDL): Disk %s: %s %d bytes, sector 0x%X, memory 0x%04X\n",
-                   dcb_dev+65,disk_rd? "Reading":"Writing",dcb_counter,{disk_sec[31:3], InterleaveTable(disk_sec[2:0])},ram_buffer);
-          int_ramb_addr[0]    <= ram_buffer - 1'b1; // We will advance automatically in next state
-          disk_load[disk_dev]    <= '0;
-          data_counter <= '0;
-          disk_state   <= disk_rd ? TAPE_READ1 : TAPE_WRITE0;
-        end
-      end // case: DISK_READ0
-      TAPE_READ1: begin
-        adamnet_req_n <= '0;
-        if (~adamnet_ack_n || USE_REQ == 0) disk_state   <= disk_rd ? TAPE_READ2 : TAPE_WRITE0;
-      end
-      TAPE_READ2: begin
-        adamnet_req_n <= '0;
-        // Read up to 512 bytes (might be less)
-        disk_addr <= data_counter;
-        if (data_counter < dcb_counter && data_counter < 16'h200) begin
-          // We are within the sector
-          int_ramb_addr[0]    <= int_ramb_addr[0] + 1'b1;
-          int_ramb_wr[0]      <= '1;
-          data_counter <= data_counter + 1'b1;
-          ram_buffer   <= ram_buffer + 1'b1;
-        end else if (data_counter < dcb_counter) begin
-          // We are leaving the sector, but we have more data to read.
-          // Flush the current sector
-          disk_wr[disk_dev]      <= '0;
-          disk_flush[disk_dev]   <= '1;
-          data_counter <= '0;
-          disk_sec     <= disk_sec + 1'b1; // Advance for next sector
-          dcb_counter  <= dcb_counter - 16'h200;
-          disk_state   <= TAPE_READ3;
-        end else begin
-          // Done reading
-          disk_wr[disk_dev]    <= '0;
-          disk_flush[disk_dev] <= '1;
-          disk_state <= DISK_IDLE;
-          disk_done  <= '1;
-          adamnet_req_n <= '1;
-        end // else: !if(data_counter < dcb_counter)
-      end // case: DISK_READ1
-      TAPE_READ3: begin
-        adamnet_req_n <= '0;
-        if (~disk_sector_loaded[disk_dev]) disk_state <= TAPE_READ0;
-      end
-      TAPE_WRITE0: begin
-        $display("Write not supported");
-        $finish;
       end
       default: begin
       end
@@ -1023,6 +1002,9 @@ module cv_adamnet
         // Queue the key NOW, while ps2_key still holds the press and the
         // modifiers still reflect what was held down with it.
         if (ps2_key[9] && !kbd_full) begin
+`ifdef ADAMNET_TRACE
+          $display("Adamnet trace: KBD queued %02x", kbd_byte);
+`endif
           kbd_fifo[kbd_wp] <= kbd_byte;
           kbd_wp           <= kbd_wp + 1'b1;
         end
@@ -1046,6 +1028,10 @@ module cv_adamnet
     case (kbd_state)
       KBD_IDLE: begin
         if (kbd_req) begin
+`ifdef ADAMNET_TRACE
+          $display("Adamnet trace: KBD read dcb %0d buf %04x len %0d queued %0d",
+                   dcb_dev, buffer, len, kbd_wp - kbd_rp);
+`endif
           kbd_buffer <= buffer;
           kbd_len    <= len;
           kbd_state  <= KBD_KEY;
@@ -1077,10 +1063,16 @@ module cv_adamnet
           kbd_state   <= KBD_IDLE;
           kbd_done    <= '1;
           kbd_partial <= '1;
+`ifdef ADAMNET_TRACE
+          $display("Adamnet trace: KBD short read, queued %0d, disk_state %0d", kbd_wp - kbd_rp, disk_state);
+`endif
         end else begin
           // watch_key = EOS wants a key, disk FSM is idle, FIFO has one.
           // The RAM write is issued by the muxes above.
           kbd_rp     <= kbd_rp + 1'b1;
+`ifdef ADAMNET_TRACE
+          $display("Adamnet trace: KBD deliver %02x to %04x", kbd_data, kbd_buffer);
+`endif
           kbd_buffer <= kbd_buffer + 1'b1;
           kbd_len    <= kbd_len - 1'b1;
 

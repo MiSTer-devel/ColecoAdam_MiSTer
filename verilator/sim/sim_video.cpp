@@ -492,3 +492,22 @@ void SimVideo::Clock(bool hblank, bool vblank, bool hsync, bool vsync, uint32_t 
 	last_hsync = hsync;
 	last_vsync = vsync;
 }
+
+// Frame buffer only, for running without a window
+void SimVideo::InitialiseHeadless() {
+	output_size = output_width * output_height * 4;
+	output_ptr = (uint32_t*)malloc(output_size);
+	memset(output_ptr, 0, output_size);
+}
+
+bool SimVideo::SavePPM(const char* file) {
+	FILE* f = fopen(file, "wb");
+	if (!f) { return false; }
+	fprintf(f, "P6\n%d %d\n255\n", output_width, output_height);
+	for (int i = 0; i < output_width * output_height; i++) {
+		unsigned char rgb[3] = { (unsigned char)output_ptr[i], (unsigned char)(output_ptr[i] >> 8), (unsigned char)(output_ptr[i] >> 16) };
+		fwrite(rgb, 1, 3, f);
+	}
+	fclose(f);
+	return true;
+}

@@ -241,6 +241,7 @@ parameter CONF_STR = {
         "OE,Stick keypad,Off,On;",
         "-;",
         "OC,Mode,Computer,Console;",
+        "O45,Expansion RAM,64K,256K,None;",
         "R0,Reset;",
         "J,Fire 1,Fire 2,*,#,0,1,2,3,4,5,6,7,8,9,Purple Tr,Blue Tr;",
         "V,v",`BUILD_DATE
@@ -358,6 +359,14 @@ end
 
 wire reset = RESET | status[0] | buttons[1] | old_mode != mode | ioctl_download;
 
+// Loading a cartridge in Computer mode acts as the ADAM's cartridge reset switch: it starts with
+// OS-7, 24K of RAM and the cartridge (ADAM Technical Manual 2.6). Reset returns to SmartWRITER.
+reg game_reset = 0;
+always @(posedge clk_sys) begin
+        if (ioctl_download && ioctl_index[5:0] == 1) game_reset <= 1;
+        else if (RESET | status[0] | buttons[1] | old_mode != mode) game_reset <= 0;
+end
+
 /////////////////  Memory  ////////////////////////
 
 wire [12:0] bios_a;
@@ -471,15 +480,36 @@ wire lowerexpansion_ram_we_n;
 wire [7:0] lowerexpansion_ram_di;
 wire [7:0] lowerexpansion_ram_do;
 
-spramv #(15) lowerexpansion_ram
+// Memory expander: port 7Fh bits 10 put expansion RAM in the lower or upper 32K window (ADAM
+// Technical Manual 2.2). A bank is one lower plus one upper 32K; expanders past 64K pick the bank
+// through port 42h (MESS adam.c). The OSD offers the plain 64K expander (bank 0 only; no
+// addressor), 256K (4 banks) or none.
+wire [14:0] expansion_ram_a;
+wire        expansion_ram_ce_n;
+wire        expansion_ram_we_n;
+wire  [7:0] expansion_ram_di;
+wire  [7:0] expansion_ram_do;
+wire  [7:0] expansion_bank;
+
+wire        exp_ram_none  = status[5];
+wire  [1:0] exp_ram_bank  = status[4] ? expansion_bank[1:0] : 2'b00;
+wire        exp_ram_upper = ~expansion_ram_ce_n;
+wire        exp_ram_we    = exp_ram_upper ? ~expansion_ram_we_n
+                                          : ~(lowerexpansion_ram_we_n | lowerexpansion_ram_ce_n);
+wire  [7:0] exp_ram_q;
+
+spramv #(18) expansion_ram
     (
      .clock(clk_sys),
-     .address(lowerexpansion_ram_a),
-     .wren(ce_10m7 & ~(lowerexpansion_ram_we_n | lowerexpansion_ram_ce_n)),
-     .data(lowerexpansion_ram_do),
-     .q(lowerexpansion_ram_di),
+     .address({exp_ram_bank, exp_ram_upper, exp_ram_upper ? expansion_ram_a : lowerexpansion_ram_a}),
+     .wren(ce_10m7 & exp_ram_we & ~exp_ram_none),
+     .data(exp_ram_upper ? expansion_ram_do : lowerexpansion_ram_do),
+     .q(exp_ram_q),
      .cs(1'b1)
      );
+
+assign lowerexpansion_ram_di = exp_ram_none ? 8'hFF : exp_ram_q;
+assign expansion_ram_di      = exp_ram_none ? 8'hFF : exp_ram_q;
 
 wire [14:0] upper_ram_a;
 wire        upper_ram_we_n, upper_ram_ce_n;
@@ -589,6 +619,7 @@ cv_console
         .reset_n_i(~reset),
         .por_n_o(),
         .mode(~mode),
+        .game_mode_i(game_reset),
         .ctrl_p1_i(ctrl_p1),
         .ctrl_p2_i(ctrl_p2),
         .ctrl_p3_i(ctrl_p3),
@@ -621,6 +652,12 @@ cv_console
         .cpu_lowerexpansion_ram_ce_n_o(lowerexpansion_ram_ce_n),
         .cpu_lowerexpansion_ram_d_i(lowerexpansion_ram_di),
         .cpu_lowerexpansion_ram_d_o(lowerexpansion_ram_do),
+        .cpu_expansion_ram_a_o(expansion_ram_a),
+        .cpu_expansion_ram_we_n_o(expansion_ram_we_n),
+        .cpu_expansion_ram_ce_n_o(expansion_ram_ce_n),
+        .cpu_expansion_ram_d_i(expansion_ram_di),
+        .cpu_expansion_ram_d_o(expansion_ram_do),
+        .cpu_expansion_bank_o(expansion_bank),
 
         .cpu_upper_ram_a_o(upper_ram_a),
         .cpu_upper_ram_we_n_o(upper_ram_we_n),
