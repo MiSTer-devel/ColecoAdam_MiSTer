@@ -317,8 +317,22 @@ Most of these wait for keys, so each needs its key sequence worked out (`--key`,
 
 ## 5. Library sweeps
 
-- [ ] `./library_scenarios.sh work/games "../SoftwareFromMiSTer/E.O.S/Games" 12`: 296 titles,
-  about 2 hours. Triage everything that isn't MATCH.
+- [x] `./library_scenarios.sh work/games "../SoftwareFromMiSTer/E.O.S/Games" 12`. Ran
+  2026-09-13 on the build before the expander, tape-write, AdamNet and DCB fixes: 283 titles
+  (13 skipped for image size), 260 MATCH, 10 CLOSE, 13 DIFFERS, in 3.8 hours with 10 jobs.
+  - Checked, not core bugs; in each case ColEm is the one failing:
+    - Cabbage Patch Kids (128K prototype): the core reaches the players menu, ColEm stays black.
+    - Electronic Game Pack II (disk and tape): the core shows its menu, ColEm a blank screen.
+    - Chess Solitaire: the core's menu is readable, ColEm's text is garbled.
+    - Donkey Kong Super Game (disk and tape): the core reaches the players menu while ColEm
+      is still on the ADAM/Nintendo title.
+    - Ace of Aces (disk and tape): ColEm can't boot ADAM CP/M.
+    - Beamrider (tape): animation phase only.
+  - [ ] Not checked yet:
+    - DIFFERS: Pitfall II (tape), Zenji (two tapes), Squish 'Em Sam (tape)
+    - CLOSE: Adventure Pack 1-3, Evolution, Journey to Maraud Mountain, Squish 'Em Sam, Tournament Tennis
+  - [ ] Re-run on the current build; Cabbage Patch Kids, which needs 128K, may behave differently
+    with the expander fixed.
 - [ ] The rest of `E.O.S/`, then `CP-M & T-DOS/` (250 files). ColEm can't be the reference
   for CP/M. On "CP-M 2.2 & Assembler (1984) (Coleco)" the core boots to the ADAM CP/M banner
   and `A>` prompt with its smart keys, while ColEm shows only the backdrop. Ace of Aces (2021)

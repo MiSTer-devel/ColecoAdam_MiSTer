@@ -154,8 +154,13 @@ writes to tape or relocates the PCB, and before this branch both simply halted.
   seven, six are explained as not core bugs; Cosmo Fighter II's missing star field is still
   open. Report: https://claude.ai/code/artifact/7b51e7a0-f8a9-4861-95a8-bae19dc71758
 - **12 ADAM scenarios** (SmartWRITER typing, 9 disks, 1 tape): all MATCH.
-- **E.O.S Games library sweep** (283 titles), partial: 156 MATCH, 6 CLOSE, 9 DIFFERS so far.
-  Differences checked so far come from ColEm (it can't boot ADAM CP/M) or timing.
+- **E.O.S Games library sweep** (283 titles, on the build before the expander, tape-write,
+  AdamNet and DCB fixes): 260 MATCH, 10 CLOSE, 13 DIFFERS.
+  - Every difference looked at so far is ColEm failing, not the core:
+    - it can't boot ADAM CP/M (Ace of Aces);
+    - it blanks or garbles Cabbage Patch Kids, Electronic Game Pack II and Chess Solitaire;
+    - it is still on Donkey Kong Super Game's title screen when the core reaches the menu.
+  - The rest are timing. `TODO.md` lists the titles not yet checked.
 - Every later fix was checked frame-identical to the build before it on SmartWRITER, a DK Jr
   disk boot and Frogger, with Troll's Tale still matching ColEm.
 
