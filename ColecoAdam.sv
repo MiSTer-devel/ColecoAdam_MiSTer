@@ -239,6 +239,7 @@ parameter CONF_STR = {
         "O3,Joysticks swap,No,Yes;",
         "OD,Keypad on numpad,Off,On;",
         "OE,Stick keypad,Off,On;",
+        "OFG,Spinner,Off,Spinner,Stick X,Stick XY;",
         "-;",
         "OC,Mode,Computer,Console;",
         "O45,Expansion RAM,64K,256K,None;",
@@ -304,6 +305,8 @@ wire [10:0] ps2_key;
 wire [15:0] joy0_l_analog, joy0_r_analog;
 wire [15:0] joy1_l_analog, joy1_r_analog;
 
+wire  [8:0] spinner_0, spinner_1;
+
 hps_io #(.CONF_STR(CONF_STR), .VDNUM(TOT_DISKS)) hps_io
 (
    .clk_sys(clk_sys),
@@ -340,7 +343,11 @@ hps_io #(.CONF_STR(CONF_STR), .VDNUM(TOT_DISKS)) hps_io
    .joystick_l_analog_0(joy0_l_analog),
    .joystick_r_analog_0(joy0_r_analog),
    .joystick_l_analog_1(joy1_l_analog),
-   .joystick_r_analog_1(joy1_r_analog)
+   .joystick_r_analog_1(joy1_r_analog),
+
+   // spinner devices, for the roller controllers
+   .spinner_0(spinner_0),
+   .spinner_1(spinner_1)
 );
 
 
@@ -580,9 +587,9 @@ wire [1:0] ctrl_p3;
 wire [1:0] ctrl_p4;
 wire [1:0] ctrl_p5;
 wire [1:0] ctrl_p6;
-wire [1:0] ctrl_p7 = 2'b11;
+wire [1:0] ctrl_p7;        // D5, spinner direction  (driven by cv_spinner below)
 wire [1:0] ctrl_p8;
-wire [1:0] ctrl_p9 = 2'b11;
+wire [1:0] ctrl_p9;        // D4 + /INT spinner strobe
 
 wire [7:0] R,G,B;
 wire hblank, vblank;
@@ -836,6 +843,77 @@ video_mixer #(.LINE_LENGTH(290), .GAMMA(1)) video_mixer
         .VSync(vs_o),
         .HBlank(hblank),
         .VBlank(vblank)
+);
+
+//////////////// Spinner / roller controllers /////////////////
+//
+// The Super Action Controller's speed roller, the Roller Controller trackball
+// and the Expansion Module #2 steering wheel all signal on controller pins 7
+// and 9 (see rtl/cv_spinner.sv for the hardware and the references). A Roller
+// Controller is wired to both ports at once, X on controller 1 and Y on
+// controller 2, which is what the "Stick XY" setting reproduces.
+//
+// Off is the default: with no steps there are no strobes, so pins 7 and 9 idle
+// high and the Z80's maskable interrupt is never raised, exactly as before.
+
+wire [1:0] spin_mode = status[16:15];  // 0 off, 1 spinner, 2 stick X, 3 stick XY
+
+// MiSTer spinner device: [7:0] is a signed step count, [8] toggles per update.
+// Follow the joystick swap so the device and the pad stay on the same player.
+wire [8:0] spin_dev_a = status[3] ? spinner_1 : spinner_0;
+wire [8:0] spin_dev_b = status[3] ? spinner_0 : spinner_1;
+
+reg  [1:0] spin_tgl_a, spin_tgl_b;
+always @(posedge clk_sys) if (ce_10m7) begin
+        spin_tgl_a <= {spin_tgl_a[0], spin_dev_a[8]};
+        spin_tgl_b <= {spin_tgl_b[0], spin_dev_b[8]};
+end
+
+wire signed [7:0] spin_step_a = $signed(spin_dev_a[7:0]);
+wire signed [7:0] spin_step_b = $signed(spin_dev_b[7:0]);
+wire        [7:0] spin_mag_a  = spin_step_a[7] ? (~spin_step_a + 8'd1) : spin_step_a;
+wire        [7:0] spin_mag_b  = spin_step_b[7] ? (~spin_step_b + 8'd1) : spin_step_b;
+
+wire spin_dev_en = (spin_mode == 2'd1);
+wire spin_step_en_a = spin_dev_en & (spin_tgl_a[1] ^ spin_tgl_a[0]);
+wire spin_step_en_b = spin_dev_en & (spin_tgl_b[1] ^ spin_tgl_b[0]);
+
+// An analog stick as a roller. The deadzone keeps a resting stick from
+// strobing, which would interrupt the Z80 for no reason.
+wire signed [7:0] spin_stick_x = $signed(joya_l_analog[7:0]);
+wire signed [7:0] spin_stick_y = $signed(joya_l_analog[15:8]);
+
+wire signed [7:0] spin_rate_a =
+        ((spin_mode >= 2'd2) && ((spin_stick_x > 8'sd24) || (spin_stick_x < -8'sd24)))
+        ? spin_stick_x : 8'sd0;
+wire signed [7:0] spin_rate_b =
+        ((spin_mode == 2'd3) && ((spin_stick_y > 8'sd24) || (spin_stick_y < -8'sd24)))
+        ? spin_stick_y : 8'sd0;
+
+cv_spinner spinner_a
+(
+        .clk_i     (clk_sys),
+        .clk_en_i  (ce_10m7),
+        .reset_n_i (~reset),
+        .step_en_i (spin_step_en_a),
+        .step_dir_i(~spin_step_a[7]),
+        .step_cnt_i((spin_mag_a > 8'd31) ? 5'd31 : spin_mag_a[4:0]),
+        .rate_i    (spin_rate_a),
+        .p7_o      (ctrl_p7[0]),
+        .p9_o      (ctrl_p9[0])
+);
+
+cv_spinner spinner_b
+(
+        .clk_i     (clk_sys),
+        .clk_en_i  (ce_10m7),
+        .reset_n_i (~reset),
+        .step_en_i (spin_step_en_b),
+        .step_dir_i(~spin_step_b[7]),
+        .step_cnt_i((spin_mag_b > 8'd31) ? 5'd31 : spin_mag_b[4:0]),
+        .rate_i    (spin_rate_b),
+        .p7_o      (ctrl_p7[1]),
+        .p9_o      (ctrl_p9[1])
 );
 
 //////////////// Keypad emulation (by Alan Steremberg) ///////
