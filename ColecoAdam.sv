@@ -499,6 +499,14 @@ wire  [7:0] expansion_ram_do;
 wire  [7:0] expansion_bank;
 
 wire        exp_ram_none  = status[5];
+// A 256K expander holds four 64K banks, and a bank number past the last one must not answer.
+// Software counts banks by writing one and reading it back until a bank stops answering, so
+// letting bank 4 alias back to bank 0 makes 256K look like more: PowerPAINT's memory sizer
+// (disk offset 1300h) counts up to four banks and then reports its maximum, which is why it
+// showed 512 on the 256K setting. The 64K expander has no bank register at all, so port 42h
+// does nothing there and every bank is the same 64K.
+wire        exp_bank_absent = status[4] & (expansion_bank > 8'd3);
+wire        exp_ram_off   = exp_ram_none | exp_bank_absent;
 wire  [1:0] exp_ram_bank  = status[4] ? expansion_bank[1:0] : 2'b00;
 wire        exp_ram_upper = ~expansion_ram_ce_n;
 wire        exp_ram_we    = exp_ram_upper ? ~expansion_ram_we_n
@@ -509,14 +517,14 @@ spramv #(18) expansion_ram
     (
      .clock(clk_sys),
      .address({exp_ram_bank, exp_ram_upper, exp_ram_upper ? expansion_ram_a : lowerexpansion_ram_a}),
-     .wren(ce_10m7 & exp_ram_we & ~exp_ram_none),
+     .wren(ce_10m7 & exp_ram_we & ~exp_ram_off),
      .data(exp_ram_upper ? expansion_ram_do : lowerexpansion_ram_do),
      .q(exp_ram_q),
      .cs(1'b1)
      );
 
-assign lowerexpansion_ram_di = exp_ram_none ? 8'hFF : exp_ram_q;
-assign expansion_ram_di      = exp_ram_none ? 8'hFF : exp_ram_q;
+assign lowerexpansion_ram_di = exp_ram_off ? 8'hFF : exp_ram_q;
+assign expansion_ram_di      = exp_ram_off ? 8'hFF : exp_ram_q;
 
 wire [14:0] upper_ram_a;
 wire        upper_ram_we_n, upper_ram_ce_n;

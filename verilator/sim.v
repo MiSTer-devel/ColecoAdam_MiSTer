@@ -265,6 +265,9 @@ spramv #(14) vram
   wire  [7:0] expansion_bank;
 
   wire        exp_ram_none  = exp_ram[1];
+  // A bank past the last one fitted must not answer; see ColecoAdam.sv for why.
+  wire        exp_bank_absent = exp_ram[0] & (expansion_bank > 8'd3);
+  wire        exp_ram_off   = exp_ram_none | exp_bank_absent;
   wire  [1:0] exp_ram_bank  = exp_ram[0] ? expansion_bank[1:0] : 2'b00;
   wire        exp_ram_upper = ~expansion_ram_ce_n;
   wire        exp_ram_we    = exp_ram_upper ? ~expansion_ram_we_n
@@ -274,13 +277,13 @@ spramv #(14) vram
     (
      .clock(clk_sys),
      .address({exp_ram_bank, exp_ram_upper, exp_ram_upper ? expansion_ram_a : lowerexpansion_ram_a}),
-     .wren(ce_10m7 & exp_ram_we & ~exp_ram_none),
+     .wren(ce_10m7 & exp_ram_we & ~exp_ram_off),
      .data(exp_ram_upper ? expansion_ram_do : lowerexpansion_ram_do),
      .q(exp_ram_q),
      .cs(1'b1)
      );
-  assign lowerexpansion_ram_di = exp_ram_none ? 8'hFF : exp_ram_q;
-  assign expansion_ram_di      = exp_ram_none ? 8'hFF : exp_ram_q;
+  assign lowerexpansion_ram_di = exp_ram_off ? 8'hFF : exp_ram_q;
+  assign expansion_ram_di      = exp_ram_off ? 8'hFF : exp_ram_q;
 
 
 wire [14:0] upper_ram_a;
