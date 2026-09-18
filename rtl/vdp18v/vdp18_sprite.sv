@@ -314,8 +314,15 @@ module vdp18_sprite
                 // stop upon Y position 208
                 stop_sprite_o = '1;
 
-              if (sprite_idx_q == 4)
-                // stop when all sprite positions have been vacated
+              if ((sprite_idx_q == 4) && sprite_visible_s)
+                // The fifth sprite on this line has been found: four are displayed and this one
+                // sets the 5S flag, so scanning can stop. It must not stop merely because four
+                // have been found, which is what this test used to do: the TMS9918A keeps
+                // reading the attribute table past sprites that are not on this line until it
+                // finds a fifth that is, or reaches Y=208 or sprite 31 below. Stopping early
+                // loses the 5S flag and its sprite number whenever the fifth sprite on the line
+                // is not the very next entry in the table, and games use that number as a
+                // scanline counter (datasheet 2.3.3).
                 stop_sprite_o = '1;
 
               if (sprite_num_q == 31)
