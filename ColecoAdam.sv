@@ -545,6 +545,7 @@ wire  [7:0] upper_ram_do;
 wire [19:0] cart_a;
 wire  [7:0] cart_d;
 wire        cart_rd;
+wire        cart_ready;   // from the SDRAM controller: cart_d is valid
 
 reg [5:0] cart_pages = 6'b0;
 //always @(posedge clk_sys) if(ioctl_download) cart_pages <= ioctl_addr[19:14];
@@ -564,7 +565,8 @@ sdram sdram
    .dout(cart_d),
    .din(ioctl_dout),
    .we(ioctl_wr),
-   .ready()
+   // Was unconnected, so nothing waited for a read to complete; see cv_console's cart_wait_n.
+   .ready(cart_ready)
 );
 
 
@@ -689,6 +691,7 @@ cv_console
         .cart_a_o(cart_a),
         .cart_d_i(cart_d),
         .cart_rd(cart_rd),
+        .cart_ready_i(cart_ready),
 
                   .ext_rom_a_o(ext_rom_a),
                   .ext_rom_d_i(ext_rom_d),

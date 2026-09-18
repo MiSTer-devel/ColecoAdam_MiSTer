@@ -548,6 +548,7 @@ wire  [7:0] ext_rom_d=8'hff;
      .cart_a_o(cart_a),
      .cart_d_i(cart_d),
      .cart_rd(cart_rd),
+     .cart_ready_i(1'b1),   // the simulator keeps the cartridge in block RAM, always ready
 
      .ext_rom_a_o(ext_rom_a),
      .ext_rom_d_i(ext_rom_d),

@@ -144,6 +144,9 @@ module cv_console
    output [19:0]                cart_a_o,
    input [7:0]                  cart_d_i,
         output                       cart_rd,
+        // High when cart_d_i is valid. Tie high where the cartridge is in block RAM and
+        // answers in the same cycle, as the simulator does.
+        input                        cart_ready_i,
         input [5:0]                  cart_pages_i,
    // extended ROM Interface ------------------------------------------------
    output [19:0]                ext_rom_a_o,
@@ -379,7 +382,21 @@ module cv_console
         end
     end
   logic adamnet_wait_n;
-  assign wait_n_s = psg_ready_s & (~m1_wait_q) & (USE_REQ == 0 ? adamnet_wait_n : '1);
+
+  // Hold the CPU while a cartridge read is still in flight. On hardware the cartridge lives in
+  // SDRAM, which answers a new address only after its CAS latency, and later still if an auto
+  // refresh is in the way. Nothing used to wait for it: cart_rd and cart_a_o are combinational
+  // from the address decode and cart_d_i was muxed straight onto the data bus, so the CPU read
+  // whatever the previous access had left there whenever the SDRAM was late. That is rare, but
+  // it lands on cartridge-heavy games - a MegaCart streaming tile data across bank switches
+  // reads far more than a 32K cartridge ever does.
+  //
+  // sdram.sv keeps `ready` high when the byte is already in the latched 16 bit word, so
+  // consecutive bytes cost nothing; this only stalls on a genuine new access.
+  logic cart_wait_n;
+  assign cart_wait_n = ~(cart_rd & ~cart_ready_i);
+
+  assign wait_n_s = psg_ready_s & (~m1_wait_q) & cart_wait_n & (USE_REQ == 0 ? adamnet_wait_n : '1);
 
   //
   //---------------------------------------------------------------------------
