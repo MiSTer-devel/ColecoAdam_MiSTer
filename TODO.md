@@ -653,3 +653,60 @@ another time ... once it starts loading seems to be stable."
   - "Page 0 is separate from internal RAM".
   - Slot placement: Lundy puts the 1MB board in slot 3 (right-most) with the addressor in the
     centre slot 2, the reverse of the old note.
+
+## 3a. A better SDRAM controller, if the expander grows
+
+Measured on the 2026-09-18 build, so these are the real numbers rather than estimates:
+
+| | |
+|---|---|
+| BRAM on the Cyclone V | 691 KB in 553 M10K blocks |
+| used by the core today | 444 KB, 466 blocks (84%) |
+| free | 87 blocks, about 109 KB at best packing |
+| a 512 KB expander needs | 410 blocks - does not fit |
+| 1 MB needs | 819 blocks - nowhere near |
+
+The 256K expander already takes 204 blocks, 44% of all the block RAM the core
+uses. One more 64K bank would fit, but 320K is not a configuration any ADAM had,
+and PowerPAINT shows why that is a bad idea: it sizes its buffers from the bank
+count (FD5Fh, read in 46 places), so a program told it has more memory than
+exists allocates into banks that are not there. Anything past 256K has to go in
+SDRAM.
+
+### Our controller is the weak one
+
+`rtl/sdram.sv` is the single-port controller from the MiSTer template: one request
+at a time, and **it refreshes on its own counter**. That self-timed refresh is
+what made cartridge reads occasionally late, which was the Uridium and Frogger
+bug fixed in `a88e4ff`. Adding expansion RAM to it would mean hanging a second
+master off a controller that has no arbitration at all.
+
+### What other cores use
+
+- **`NES_MiSTer/rtl/sdram.sv` - the best fit.** Three **byte-wide** channels, each
+  with `addr`, `rd`, `wr`, `din`, `dout` and `busy`, arbitrated by priority in its
+  idle state. Two properties matter for us:
+  - each channel remembers the last 16 bit word it fetched and skips the access
+    when the next byte is in it, which is what a Z80 walking through memory does
+    almost every cycle;
+  - **refresh is an input**, so the core schedules it - during blanking, say -
+    instead of it landing in the middle of a CPU read.
+  A Z80 machine wants byte channels and a busy line, and `busy` drops straight
+  into the wait chain `cart_wait_n` already uses. ch0 for the cartridge, ch1 for
+  the expander, ch2 spare.
+- **`Genesis_MiSTer/rtl/sdram.sv`** and **`MegaCD_MiSTer/rtl/sdram.sv`**: word-wide
+  ports with `req`/`ack`. Fine designs, but 16 bit oriented, so every Z80 byte
+  access would need the halves picking apart.
+- **`SNES_MiSTer/rtl/sdram.sv`**: two 16 bit ports plus a host port, and the most
+  complex of them. More machinery than this core needs.
+
+Timing is not a problem: the NES controller is written for up to 128 MHz with its
+delays sized for 85 MHz, and our `clk_sys` is 42.666 MHz, so every constraint is
+met with room to spare.
+
+- [ ] Port `NES_MiSTer/rtl/sdram.sv`, cartridge on ch0 and expander on ch1, and
+  drive `refresh` from the video blanking the core already has.
+- [ ] Do it only once the card behaviour below is known. How many bits of port 42h
+  a real 512K or 1MB card latches, and whether both 32K windows follow the same
+  bank, decides the address map - and guessing at exactly those semantics is what
+  produced the PowerPAINT bug in the first place.
