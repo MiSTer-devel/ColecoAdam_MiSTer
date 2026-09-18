@@ -257,6 +257,46 @@ published privately at https://claude.ai/code/artifact/7b51e7a0-f8a9-4861-95a8-b
   - Breakout for Roller Controller moves its paddle; the SAS roller test responds; Frogger is
     unchanged.
 
+### The fifth sprite was lost whenever it was not the next one in the table (2026-09-18)
+
+- **Symptom:** Uridium (2019) (Team Pixelboy) (SGM) drew its title and then sat on a green screen
+  for ever. GitHub issue #12, reported in 2022, where rampa069 noted that a build with an
+  F18A-style VDP fixed both this and Gauntlet.
+- **Cause:** `vdp18_sprite.sv` stopped the sprite scan as soon as four visible sprites had been
+  found (`if (sprite_idx_q == 4) stop_sprite_o = '1;`). A TMS9918A keeps reading the attribute
+  table past entries that are not on the current line until it finds a fifth that is, or reaches
+  the Y=208 terminator or sprite 31. So whenever the fifth sprite on a line was not the very next
+  entry, the 5S flag and its sprite number were lost - and datasheet 2.3.3 puts that number in
+  the low 5 bits of the status register, which games read in a tight loop as a scanline counter.
+- **How it was found:** an address profile of the frozen phase alone (`SIM_ADDR_PROFILE_FROM`)
+  put the CPU at 00ECh, `IN A,(BF) / AND 5F / CP 5C / JP C` - a wait for fifth-sprite number 28,
+  followed by another for 29 at 00F7h. `SIM_SPR5_PROFILE` showed the engine reporting 4, 8, 12,
+  16, 20 and 28: an evenly spaced ladder with 24 missing and 28 counted twice.
+- **Fix:** stop only when that fifth sprite is actually visible.
+- **Check:** the engine now reports 29 as well, and Uridium warps in and plays. Cosmo Fighter II
+  is byte-identical before and after, so its star field is something else.
+
+### Nothing waited for the SDRAM when reading the cartridge (2026-09-18)
+
+- **Symptom:** Uridium and Gauntlet misbehave on hardware while playing correctly in simulation.
+  Uridium corrupts its screen when a game starts; Gauntlet's maze breaks up into displaced bands
+  when scrolling. The same Gauntlet breakup happens on the stock MiSTer ColecoVision core.
+- **Cause:** on hardware the cartridge is in SDRAM. `ColecoAdam.sv` left the controller's
+  `.ready()` output unconnected, while `cart_rd` and `cart_a_o` are combinational from the
+  address decode and `cart_d_i` is muxed straight onto the CPU data bus. `sdram.sv` answers a
+  new address only after its CAS latency, and later when an auto refresh is in the way, so a late
+  read handed the Z80 whatever the previous access had left behind.
+- **Why it hits these two:** a Z80 T-state is about twelve `clk_sys` cycles, so a read normally
+  lands inside the M-cycle. A MegaCart streaming tile data across bank switches reads far harder
+  than a 32K cartridge, which is where the margin runs out. The stock ColecoVision core keeps
+  cartridges in SDRAM too, which fits the same breakup appearing there.
+- **Fix:** `cv_console` takes a `cart_ready_i` and holds the CPU with the wait chain it already
+  has for the PSG, the M1 flip-flop and AdamNet. `sdram.sv` keeps `ready` high when the byte is
+  already in the latched 16 bit word, so consecutive bytes cost nothing.
+- **Check:** none possible in simulation - the simulator keeps the cartridge in block RAM and
+  ties `cart_ready_i` high, and Frogger's frames are identical either side of the change. This
+  one can only be judged on hardware.
+
 ## Still open
 
 - **Cosmo Fighter II's star field is missing.** ColEm draws about 100 dots a frame, the core
@@ -271,10 +311,13 @@ published privately at https://claude.ai/code/artifact/7b51e7a0-f8a9-4861-95a8-b
 - **System Hardware Test and ADAM Final Test 3.3 are not black after all** (checked 2026-09-18 in
   Computer mode, where an ADAM diagnostic belongs). Both run:
   - System Hardware Test draws its title and reports "FAIL CONTROLLER PORT #1", "FAIL AUX.
-    VIDEO" and "FAIL AUX. AUDIO". The two AUX lines are the ADAM's auxiliary video and audio
-    connections, which the core does not emulate, so those are expected. The controller port
-    failure is real and unexplained; it reads the same with a spinner turning, so it is not the
-    pin 7/9 lines.
+    VIDEO" and "FAIL AUX. AUDIO". **All three are expected**: this is a factory test that needs
+    Coleco's manufacturing fixture. Its controller test (83D0h) writes a pattern to **port 09h**,
+    which no ADAM decodes, waits, then reads controller 1 and compares against a table at 8724h -
+    `7F 7E 7B 77 7D 3F 5F`, the idle value and then each controller line pulled low in turn by
+    the fixture. With no fixture the port stays at 7Fh, so it times out after 32 tries and
+    prints the failure. Port 2 is not "passing" either: the handler at 85B3h prints the message
+    and jumps past the port 2 test. The AUX video and audio lines are the same kind of thing.
   - ADAM Final Test 3.3 draws "ADAM SYSTEM FINAL TEST REV 3.3" and waits at a "STATION ID -"
     prompt for keyboard input, which is why it looked dead.
 - **ColEm can't be the reference for ADAM-only cartridges.** It switches to ColecoVision mode

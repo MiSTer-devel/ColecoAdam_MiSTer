@@ -16,8 +16,11 @@ can sweep in the background.
   differently, because the baseline had `finalize.sh`'s rescore applied and this run has not;
   their match numbers are the same.)
   - [ ] Run `./finalize.sh work/carts_spin` if the labels are wanted for the record.
-- [ ] **B. Uridium's freeze** (section 8). The one open GitHub issue that still reproduces.
-- [ ] **C. Gauntlet's maze** (section 8), to settle the rest of that issue.
+- [x] **B. Uridium's freeze** - fixed, and confirmed on hardware. Two faults, the lost fifth
+  sprite (`b6f6e63`) and the unwaited SDRAM read (`a88e4ff`).
+- [ ] **C. Gauntlet's maze** - it plays well but still breaks up when scrolling, with both fixes
+  in. Not ours alone: the stock ColecoVision core does the same. Next step is footage of the real
+  thing, not more simulation. Section 8.
 - [x] **D. The "black-screen" test cartridges** - they are not black. In Computer mode, where an
   ADAM diagnostic belongs, System Hardware Test reports "FAIL CONTROLLER PORT #1", "FAIL AUX.
   VIDEO" and "FAIL AUX. AUDIO", and ADAM Final Test 3.3 waits at a "STATION ID -" prompt for
@@ -201,6 +204,9 @@ came before that fix.
   - Map the expansion at an offset such as 100000h and share `sdram.sv`'s single request port;
     the Z80 only makes one access at a time.
   - Give `sim.v` the same memory.
+- [ ] **Power Paint** shows a memory readout on its second splash screen - reportedly up to 512K,
+  though perhaps not the whole range. A good way to see what a real program thinks the expander
+  holds, so run it at each Expansion RAM setting and read that number off the screen.
 - [ ] Test beyond-64K software:
   - [ ] T-DOS and CP/M 2.2 RAM disks
   - [ ] EOS RAM disks (ADAM's Desktop, SmartDSK, MegaDisk)
@@ -246,10 +252,14 @@ Most of these wait for keys, so each needs its key sequence worked out (`--key`,
     System Hardware Test reports "FAIL CONTROLLER PORT #1" plus AUX video and AUX audio, which
     the core does not emulate. Final Test 3.3 waits at "STATION ID -" for keyboard input.
     - [ ] Type a station ID into Final Test 3.3 and run its tests through.
-    - [ ] Find what "FAIL CONTROLLER PORT #1" is testing: the string is in the cartridge, so
-      disassemble backwards from it. It is not the spinner lines - the result is identical with
-      a spinner turning - and it is not this branch's `cv_ctrl` change either, since with the
-      spinner idle that port reads exactly as it did before (7Fh).
+    - [x] "FAIL CONTROLLER PORT #1" is expected, and so are the two AUX lines: the test needs
+      Coleco's manufacturing fixture. It writes a pattern to port 09h, which nothing on an ADAM
+      decodes, and expects the controller port to read back 7Fh then each line pulled low in
+      turn (table at 8724h). Without the fixture it times out. Port 2 is not passing either -
+      the failure handler skips that test. See `STATUS.md`.
+      - [ ] Optional and quite appealing: emulate that fixture in the simulator only, so port 09h
+        drives the controller lines. The cartridge would then check our controller decode line by
+        line, which is a better test of it than any game.
     - [ ] Check the Menu Version too.
   - [ ] Old note, now known to be wrong: black screen in
     both old and new builds. Find out whether they wait for input or need test hardware.
@@ -406,6 +416,8 @@ Implemented on 2026-09-18 (`rtl/cv_spinner.sv`, `rtl/cv_ctrl.sv`, OSD "Spinner")
 and the references in `docs/controllers/`. What is left:
 
 - [ ] Run the hardware checklist for it, `HANDOFF.md` section 3, "Spinner and roller controllers".
+  Now possible: `ColecoAdam_20260918_sdram.rbf` on the MiSTer is the first build that contains
+  `cv_spinner.sv`, and all the `_AdamTests` MGLs point at it.
 - [ ] Play the real titles and judge the feel: Slither and Victory (Roller Controller), Turbo and
   Destructor (Driving Module), Super Action Baseball and Football (speed roller). The step rate
   for an analog stick is MAME's sensitivity, |rate| * 2 steps per second, and may want tuning per
@@ -509,14 +521,31 @@ switches it back on. MegaCart paging runs until exactly that moment: 63 bank swi
 at frame 1599, using pages 0, 1, 2, 3 and 5 of the eight. So it stops loading when it should be
 loading a level.
 
-- [ ] Log VDP register 1 writes to find where the display is turned off and what the program is
-  waiting for before it would turn it back on. Also log `megacart_page`: both this and Gauntlet
-  are MegaCarts, and a level load reading the wrong bank would look exactly like this.
-- [ ] Check whether the AY is the thing being waited on. Ports 50h/51h/52h are decoded and
-  `ym2149_audio` is wired up, so reads return something, but an SGM detection routine that expects
-  particular values would not know that.
-- [ ] Compare against the MiSTer ColecoVision core to confirm it fails there too, and if so raise
-  it upstream rather than here.
+Traced further with the new `SIM_VDP_TRACE`, `SIM_MEGA_TRACE` and `SIM_ADDR_PROFILE_FROM`:
+
+- At frame 1598 the game writes R1 = 32h: **text mode with the display off**, and never turns it
+  back on. R5 = 37h, so the sprite table is at 1B80h, and during the freeze it holds two sprites
+  and a D0 terminator.
+- Profiled from frame 1700 - the frozen phase alone - the CPU spins at 00ECh in a routine in SGM
+  RAM: `IN A,(BF) / AND 5F / CP 5C / JP C`, waiting for the fifth-sprite flag with a number of 28
+  or more. The sprite probe reports **zero** fifth-sprite detections in that phase, which is
+  correct: a 9918 runs no sprites in text mode, and there are only two sprites anyway.
+- That routine is not corrupt. The bytes at 00E0h are identical at frames 1000, 1400 and 1700,
+  so it is resident code the game put there deliberately.
+
+So the game calls a raster-sync routine written for graphics mode while it is in text mode with
+the screen off, which cannot ever return. The wrong turn is earlier, in whatever chose that path.
+
+- [x] **Fixed, and confirmed on hardware on 2026-09-18.** Two separate faults:
+  - the sprite scan stopped at four visible sprites, losing the 5S flag and its number, so the
+    game's wait for fifth-sprite number 29 never ended (`b6f6e63`);
+  - nothing waited for the SDRAM, so the Z80 read stale cartridge bytes, which corrupted the
+    screen on hardware while simulation ran fine (`a88e4ff`).
+  With both, Uridium warps in and plays "Zinc" on a DE10-Nano, matching simulation.
+  (The AY was never the problem; ports 50h/51h/52h are decoded and `ym2149_audio` is wired up.)
+- [ ] Both fixes are candidates to raise upstream with the MiSTer ColecoVision core, which shares
+  the vdp18 lineage and also keeps cartridges in SDRAM. Gauntlet's breakup is already confirmed
+  there; the Uridium faults are very likely present too.
 
 ### #12 Gauntlet - boots; graphics complaint not yet judged
 
@@ -527,9 +556,35 @@ moving", which does not happen on real hardware or the ColecoVision core, and ra
 found that a build using an F18A-style VDP fixed both this and Uridium - which points at the VDP
 rather than the memory map.
 
-- [ ] Get into the maze and compare consecutive frames for blocks that flash on a still screen.
-- [ ] If it reproduces, this is a VDP bug and belongs with the Cosmo Fighter II star field in
-  section 6: both are `rtl/vdp18v` behaviour that ColEm and the F18A get right.
+- [x] **Does not reproduce.** Played in the maze on a DE10-Nano on 2026-09-18 with
+  `ColecoAdam_20260913_accuracy.rbf`: no flashing blocks on the walls. The 2022 report is fixed,
+  whichever change did it. The cartridge and a `C4 Gauntlet` launcher are on the MiSTer, in
+  `games/Adam/_accuracy_tests/` and `_AdamTests/`.
+- **The maze breaks up when moving left and right**, noticed on hardware on 2026-09-18 and shown
+  in two screenshots: wall runs step between tile rows, as if part of the screen holds the map
+  from one frame and part from the next. The game otherwise plays well. Ruled out so far:
+  - the fifth-sprite fix below - it changed nothing here;
+  - the SDRAM wait fix, which cured Uridium completely and left this untouched;
+  - **the stock MiSTer ColecoVision core in SGM mode does the same**, which is no surprise since
+    this core started from the ColecoVision parts. A shared bug in the vdp18 lineage rather than
+    anything this branch did, so a fix belongs upstream too.
+  - [ ] Settle whether it is a bug at all: find footage of Gauntlet running on a real
+    ColecoVision with a Super Game Module and see whether the maze does the same thing there.
+    The game rewrites the whole name table to scroll, which no ColecoVision can do inside vblank,
+    so some tearing is expected; the question is whether this much is.
+  - [ ] The likely mechanism: the game cannot rewrite the name table inside vblank, so it uses the
+    fifth-sprite number to follow the beam and rewrite behind it. If our 5S flag is reported on a
+    different line than the real chip would, the game rewrites the wrong band. The fix below made
+    the missing numbers appear; the next question is whether they appear on the **right lines**.
+    Record the scanline at each detection and check it against the sprite Y positions in VRAM.
+  - [ ] Reproduce it in simulation first. Gauntlet's own demo reaches the same screens - the
+    status bar reads "PRESS FIRE" in the hardware screenshots too - so a long enough run gets to a
+    complicated maze without having to drive the game.
+- Tearing was also noticed on the monitor, separately from that. It is not the core: six screenshots
+  taken while it was happening are all clean, and a MiSTer screenshot comes from the core's own
+  framebuffer, so a tear the core produced would be in them. `/media/fat/MiSTer.ini` has
+  `vsync_adjust=0` with `video_mode=0`, so HDMI runs at a fixed 60 Hz against the core's 59.92 Hz
+  and a tear line rolls through. `vsync_adjust=1` is the fix, and it applies to every core.
 
 ### #12 multicarts and reset
 
