@@ -397,6 +397,37 @@ Most of these wait for keys, so each needs its key sequence worked out (`--key`,
   2 × 720K and others. Check whether the core boots them; ColEm can't, so check by screens.
 - [ ] SGM titles: port 53h RAM and AY sound.
 
+## 5a. Frogger's green block, and what it is not
+
+Seen on hardware on 2026-09-18: a solid green block on the left of the trucks in the top road
+row, flashing on and off. Investigated 2026-09-18; **not reproduced in simulation** in ~17,000
+frames across five scenarios, nor by ColEm on the same scenario.
+
+Measured from the hardware screenshots and from VRAM:
+
+- It is exactly one character cell - char row 15, columns 12 and 30, solid colour index 12 - and
+  **the road vehicles are background characters, not sprites**. The sprite attribute table at
+  1E00h holds ten sprites at a gameplay frame and none are anywhere near the road.
+- The cell holds **name 00h, Frogger's own blank tile**, where the truck's lower-left cell should
+  hold E6h. So two name-table bytes, 19ECh and 19FEh, read 00h instead. Both trucks in a row use
+  the same tile names, which is why both show it at once.
+- Ruled out: sprites; corruption of the truck's tile pattern or colour bytes, which are static and
+  would render black rather than green; and dropped CPU writes to VRAM - 609,938 writes scheduled
+  in 1400 frames with zero collisions.
+
+**Fixed by the SDRAM wait (`a88e4ff`)**, confirmed on hardware on 2026-09-18: Frogger plays
+cleanly on `ColecoAdam_20260918_sdram.rbf`.
+
+That also settles what it was. The first guess - the beam catching Frogger mid-redraw, since it
+rewrites the whole road row of names on every scroll step - was wrong. The value written was
+wrong, not merely caught early: the cell held Frogger's blank tile 00h where E6h belonged, which
+is what happens when the Z80 reads a **stale byte from the cartridge** and stores it. Before the
+fix nothing waited for the SDRAM, so a late read returned whatever the previous access left
+behind, and Frogger reads tile data from the cartridge constantly while scrolling.
+
+Worth remembering as a diagnostic pattern: a *wrong but valid* value in VRAM points at the source
+the program read from, while a torn or half-updated screen points at timing.
+
 ## 6. Known bugs
 
 - [ ] Cosmo Fighter II's star field is missing. Compare a CPU trace against ColEm up to the
@@ -415,9 +446,14 @@ Most of these wait for keys, so each needs its key sequence worked out (`--key`,
 Implemented on 2026-09-18 (`rtl/cv_spinner.sv`, `rtl/cv_ctrl.sv`, OSD "Spinner"); see `STATUS.md`
 and the references in `docs/controllers/`. What is left:
 
-- [ ] Run the hardware checklist for it, `HANDOFF.md` section 3, "Spinner and roller controllers".
-  Now possible: `ColecoAdam_20260918_sdram.rbf` on the MiSTer is the first build that contains
-  `cv_spinner.sv`, and all the `_AdamTests` MGLs point at it.
+- [x] **Works on hardware.** Bruce's Controller Tester (`S1`) with the OSD Spinner option on
+  *Stick X* tracks the analog stick on a DE10-Nano, 2026-09-18, on
+  `ColecoAdam_20260918_sdram.rbf` - the first build containing `cv_spinner.sv`. That is the
+  spinner path proven end to end: OSD option, `cv_spinner`, the pin 7/9 signalling, `cv_ctrl`'s
+  strobe and interrupt, and OS-7's own counting routine.
+- [ ] The rest of `HANDOFF.md` section 3, "Spinner and roller controllers": the *Spinner* setting
+  with a real spinner device, *Stick XY* for a Roller Controller title, and a real game - Slither,
+  Victory, Turbo or Super Action Baseball.
 - [ ] Play the real titles and judge the feel: Slither and Victory (Roller Controller), Turbo and
   Destructor (Driving Module), Super Action Baseball and Football (speed roller). The step rate
   for an analog stick is MAME's sensitivity, |rate| * 2 steps per second, and may want tuning per
