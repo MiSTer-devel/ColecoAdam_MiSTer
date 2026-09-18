@@ -54,6 +54,9 @@ module emu
    input [8:0]           spinner_4,
    input [8:0]           spinner_5,
 
+   // 0 off, 1 spinner device, 2 stick X, 3 stick XY (the OSD's Spinner option)
+   input [1:0]           spin_mode,
+
         // ps2 alternative interface.
         // [8] - extended, [9] - pressed, [10] - toggles with every press/release
    input [10:0]          ps2_key,
@@ -371,9 +374,65 @@ wire [1:0] ctrl_p3;
 wire [1:0] ctrl_p4;
 wire [1:0] ctrl_p5;
 wire [1:0] ctrl_p6;
-wire [1:0] ctrl_p7 = 2'b11;
+wire [1:0] ctrl_p7;        // D5, spinner direction  (driven by cv_spinner below)
 wire [1:0] ctrl_p8;
-wire [1:0] ctrl_p9 = 2'b11;
+wire [1:0] ctrl_p9;        // D4 + /INT spinner strobe
+
+//////////////// Spinner / roller controllers /////////////////
+// Same wiring as ColecoAdam.sv; see rtl/cv_spinner.sv. The simulator has no
+// OSD, so spin_mode comes in as a port (--spin on the command line).
+
+// MiSTer spinner device: [7:0] is a signed step count, [8] toggles per update
+reg  [1:0] spin_tgl_a, spin_tgl_b;
+always @(posedge clk_sys) if (ce_10m7) begin
+        spin_tgl_a <= {spin_tgl_a[0], spinner_0[8]};
+        spin_tgl_b <= {spin_tgl_b[0], spinner_1[8]};
+end
+
+wire signed [7:0] spin_step_a = $signed(spinner_0[7:0]);
+wire signed [7:0] spin_step_b = $signed(spinner_1[7:0]);
+wire        [7:0] spin_mag_a  = spin_step_a[7] ? (~spin_step_a + 8'd1) : spin_step_a;
+wire        [7:0] spin_mag_b  = spin_step_b[7] ? (~spin_step_b + 8'd1) : spin_step_b;
+
+wire spin_dev_en = (spin_mode == 2'd1);
+wire spin_step_en_a = spin_dev_en & (spin_tgl_a[1] ^ spin_tgl_a[0]);
+wire spin_step_en_b = spin_dev_en & (spin_tgl_b[1] ^ spin_tgl_b[0]);
+
+wire signed [7:0] spin_stick_x = $signed(joystick_l_analog_0[7:0]);
+wire signed [7:0] spin_stick_y = $signed(joystick_l_analog_0[15:8]);
+
+wire signed [7:0] spin_rate_a =
+        ((spin_mode >= 2'd2) && ((spin_stick_x > 8'sd24) || (spin_stick_x < -8'sd24)))
+        ? spin_stick_x : 8'sd0;
+wire signed [7:0] spin_rate_b =
+        ((spin_mode == 2'd3) && ((spin_stick_y > 8'sd24) || (spin_stick_y < -8'sd24)))
+        ? spin_stick_y : 8'sd0;
+
+cv_spinner spinner_a
+(
+        .clk_i     (clk_sys),
+        .clk_en_i  (ce_10m7),
+        .reset_n_i (~reset),
+        .step_en_i (spin_step_en_a),
+        .step_dir_i(~spin_step_a[7]),
+        .step_cnt_i((spin_mag_a > 8'd31) ? 5'd31 : spin_mag_a[4:0]),
+        .rate_i    (spin_rate_a),
+        .p7_o      (ctrl_p7[0]),
+        .p9_o      (ctrl_p9[0])
+);
+
+cv_spinner spinner_b
+(
+        .clk_i     (clk_sys),
+        .clk_en_i  (ce_10m7),
+        .reset_n_i (~reset),
+        .step_en_i (spin_step_en_b),
+        .step_dir_i(~spin_step_b[7]),
+        .step_cnt_i((spin_mag_b > 8'd31) ? 5'd31 : spin_mag_b[4:0]),
+        .rate_i    (spin_rate_b),
+        .p7_o      (ctrl_p7[1]),
+        .p9_o      (ctrl_p9[1])
+);
 
 wire [7:0] R,G,B;
 wire hblank, vblank;

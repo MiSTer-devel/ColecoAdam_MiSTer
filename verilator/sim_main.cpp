@@ -51,6 +51,7 @@ int initialReset = 48;
 bool run_enable = 1;
 bool adam_mode= 1;
 int exp_ram_mode = 0;   // memory expander for sim.v exp_ram: 0 = 64K, 1 = 256K (port 42h banks), 2 = none
+int spin_mode_opt = 0;  // sim.v spin_mode: 0 = off, 1 = spinner device (set by --spin)
 int batchSize = 150000;
 //int batchSize = 100;
 bool single_step = 0;
@@ -343,6 +344,8 @@ int verilate() {
                 VERTOPINTERN->clk_sys = clk_sys.clk;
                 VERTOPINTERN->adam = adam_mode;
                 VERTOPINTERN->exp_ram = exp_ram_mode;
+                // --spin drives the spinner device path, like the OSD's "Spinner" setting
+                VERTOPINTERN->spin_mode = spin_mode_opt;
 
                 // Simulate both edges of system clock
                 if (clk_sys.clk != clk_sys.old) {
@@ -588,6 +591,49 @@ uint32_t scriptedJoystick(int frame) {
         return bits;
 }
 
+// --spin/--spin2 STEPS@FRAME[:LEN]: turn the roller STEPS notches per frame for LEN frames.
+// This drives the core the way a MiSTer spinner device does: a signed step count with bit 8
+// toggled on every update.
+struct SpinSpec { int port; int frame; int steps; int length; };
+std::vector<SpinSpec> spins;
+unsigned char spin_toggle[2] = { 0, 0 };
+
+// --peek [v:]ADDR[:LEN]@FRAME prints bytes of memory when FRAME is reached. Without a prefix it
+// reads the console's RAM array, whose index is the Z80 address in Adam mode; console mode
+// mirrors its 1K, so Z80 7038h is index 6038h. With "v:" it reads the 16K of VRAM instead, which
+// is where the VDP tables live.
+struct PeekSpec { int addr; int len; int frame; bool vram; };
+std::vector<PeekSpec> peeks;
+
+void scriptedPeek(int frame) {
+        for (const PeekSpec& p : peeks) {
+                if (p.frame != frame) { continue; }
+                printf("peek frame %d %s%04X:", frame, p.vram ? "vram " : "", p.addr);
+                for (int i = 0; i < p.len; i++) {
+                        printf(" %02X", p.vram
+                               ? VERTOPINTERN->emu__DOT__vram__DOT__mem[(p.addr + i) & 0x3FFF]
+                               : VERTOPINTERN->emu__DOT__ram__DOT__ram[(p.addr + i) & 0x7FFF]);
+                }
+                printf("\n");
+                fflush(stdout);
+        }
+}
+
+void scriptedSpinner(int frame) {
+        for (int port = 0; port < 2; port++) {
+                int steps = 0;
+                for (const SpinSpec& s : spins) {
+                        if (s.port == port && frame >= s.frame && frame < s.frame + s.length) { steps += s.steps; }
+                }
+                if (steps == 0) { continue; }
+                if (steps > 127) { steps = 127; }
+                if (steps < -127) { steps = -127; }
+                spin_toggle[port] ^= 1;
+                uint32_t v = ((uint32_t)spin_toggle[port] << 8) | (uint8_t)steps;
+                if (port == 0) { VERTOPINTERN->spinner_0 = v; } else { VERTOPINTERN->spinner_1 = v; }
+        }
+}
+
 // Adam key names; the same list as colem_ref's --key
 int adamKeyName(const std::string& name) {
         static const struct { const char* name; int code; } keys[] = {
@@ -636,16 +682,58 @@ static int addr_profile_every = 0;
 static long addr_profile_step = 0;
 static std::vector<unsigned long> addr_hist;
 
+// SIM_SPR5_PROFILE=1 watches the VDP's fifth-sprite status: how often the sprite engine reports
+// a fifth sprite and with which number, and what the CPU would read back in the low 5 bits of the
+// status register. Games use that number as a scanline counter, so "never set" or "always the
+// same number" is the signature of a broken one.
+static int spr5_profile = 0;
+static unsigned long spr5_events = 0;
+static std::vector<unsigned long> spr5_detect_hist;   // numbers the sprite engine reported
+static std::vector<unsigned long> spr5_latched_hist;  // numbers visible in the status register
+static unsigned long spr5_flag_steps = 0, spr5_steps = 0;
+// and the VDP's interrupt output, which the ColecoVision wires to the Z80's NMI: a program that
+// sits in HALT is waiting for this, so "stopped falling" explains a frozen screen.
+static unsigned long vdp_int_falls = 0;
+static int vdp_int_last_frame = -1, vdp_int_prev = 1;
+// and the MegaCart bank, since a cartridge that stops paging has stopped loading
+static unsigned long mega_switches = 0;
+static int mega_last_frame = -1, mega_prev = -1;
+static std::vector<unsigned long> mega_hist;
+
 void stepSim() {
         feedPS2();
         verilate();
         if (addr_profile_every > 0 && ++addr_profile_step % addr_profile_every == 0) {
                 addr_hist[VERTOPINTERN->emu__DOT__console__DOT__adamnet__DOT__z80_addr]++;
         }
+        if (spr5_profile) {
+                spr5_steps++;
+                if (VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__spr_5th_s) {
+                        spr5_events++;
+                        spr5_detect_hist[VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__spr_5th_num_s & 31]++;
+                }
+                if (VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__sprite_5th_q) {
+                        spr5_flag_steps++;
+                        spr5_latched_hist[VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__sprite_5th_num_q & 31]++;
+                }
+                int vint = VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__int_n_q;
+                if (vdp_int_prev && !vint) { vdp_int_falls++; vdp_int_last_frame = video.count_frame; }
+                vdp_int_prev = vint;
+
+                int page = VERTOPINTERN->emu__DOT__console__DOT__addr_dec_b__DOT__megacart_page & 63;
+                if (page != mega_prev) {
+                        mega_switches++;
+                        mega_last_frame = video.count_frame;
+                        mega_prev = page;
+                }
+                mega_hist[page]++;
+        }
         if (video.count_frame == last_frame) { return; }
         last_frame = video.count_frame;
 
         if (headless) { VERTOPINTERN->joystick_0 = scriptedJoystick(last_frame); }
+        if (!spins.empty()) { scriptedSpinner(last_frame); }
+        if (!peeks.empty()) { scriptedPeek(last_frame); }
 
         bool shot = shot_every > 0 && last_frame % shot_every == 0;
         for (int f : shot_frames) {
@@ -675,6 +763,9 @@ void usage(const char* prog) {
                 "  --outdir DIR           where to save frames (default .)\n"
                 "  --press KEY@FRAME[:N]  hold KEY on controller 1 for N frames (default 8)\n"
                 "                         KEY: 0-9 star pound up down left right fire1 fire2 purple blue\n"
+                "  --spin STEPS@FRAME[:N] turn controller 1's roller STEPS notches per frame for N frames\n"
+                "                         (negative spins the other way); --spin2 for controller 2\n"
+                "  --peek [v:]ADDR[:N]@FRAME  print N bytes of RAM, or of VRAM with v:, at FRAME\n"
                 "  --disk N FILE          mount a floppy image in drive N (1-4); writes go back to FILE\n"
                 "  --tape N FILE          mount a tape image in drive N (1-4); writes go back to FILE\n"
                 "                         (without --disk/--tape, adam.dsk and adam.ddp are mounted if present)\n"
@@ -719,6 +810,32 @@ void parseArgs(int argc, char** argv) {
                         size_t colon = spec.find(':', at);
                         p.length = colon == std::string::npos ? 8 : atoi(spec.c_str() + colon + 1);
                         key_presses.push_back(p);
+                }
+                else if (arg == "--spin" || arg == "--spin2") {
+                        std::string spec = value();
+                        size_t at = spec.find('@');
+                        if (at == std::string::npos) { fprintf(stderr, "Bad %s %s\n", arg.c_str(), spec.c_str()); exit(1); }
+                        SpinSpec s;
+                        s.port = (arg == "--spin2") ? 1 : 0;
+                        s.steps = atoi(spec.c_str());
+                        s.frame = atoi(spec.c_str() + at + 1);
+                        size_t colon = spec.find(':', at);
+                        s.length = colon == std::string::npos ? 1 : atoi(spec.c_str() + colon + 1);
+                        spins.push_back(s);
+                        spin_mode_opt = 1;
+                }
+                else if (arg == "--peek") {
+                        std::string spec = value();
+                        size_t at = spec.find('@');
+                        if (at == std::string::npos) { fprintf(stderr, "Bad --peek %s\n", spec.c_str()); exit(1); }
+                        PeekSpec p;
+                        p.vram = spec.compare(0, 2, "v:") == 0;
+                        if (p.vram) { spec = spec.substr(2); at -= 2; }
+                        p.addr = (int)strtol(spec.c_str(), nullptr, 16);
+                        size_t colon = spec.find(':');
+                        p.len = (colon == std::string::npos || colon > at) ? 1 : atoi(spec.c_str() + colon + 1);
+                        p.frame = atoi(spec.c_str() + at + 1);
+                        peeks.push_back(p);
                 }
                 else if (arg == "--disk" || arg == "--tape") {
                         int n = atoi(value().c_str());
@@ -773,6 +890,12 @@ int runHeadless() {
                 addr_profile_every = atoi(e);
                 addr_hist.assign(65536, 0);
         }
+        if (getenv("SIM_SPR5_PROFILE")) {
+                spr5_profile = 1;
+                spr5_detect_hist.assign(32, 0);
+                mega_hist.assign(64, 0);
+                spr5_latched_hist.assign(32, 0);
+        }
         VERTOPINTERN->joystick_0 = scriptedJoystick(0);
 
         auto start = std::chrono::steady_clock::now();
@@ -790,6 +913,21 @@ int runHeadless() {
                 for (int i = 0; i < 24 && addr_hist[order[i]]; i++) {
                         printf("  %04X %6.2f%%\n", order[i], 100.0 * addr_hist[order[i]] / total);
                 }
+        }
+
+        if (spr5_profile) {
+                printf("fifth sprite: %lu detections in %lu steps, flag set for %.2f%% of them\n",
+                       spr5_events, spr5_steps, 100.0 * spr5_flag_steps / (spr5_steps ? spr5_steps : 1));
+                printf("  numbers reported by the sprite engine:");
+                for (int i = 0; i < 32; i++) { if (spr5_detect_hist[i]) { printf(" %d:%lu", i, spr5_detect_hist[i]); } }
+                printf("\n  numbers visible in the status register:");
+                for (int i = 0; i < 32; i++) { if (spr5_latched_hist[i]) { printf(" %d:%lu", i, spr5_latched_hist[i]); } }
+                printf("\nvdp interrupt: %lu assertions, last at frame %d of %d\n",
+                       vdp_int_falls, vdp_int_last_frame, last_frame);
+                printf("megacart: %lu bank switches, last at frame %d; pages used:",
+                       mega_switches, mega_last_frame);
+                for (int i = 0; i < 64; i++) { if (mega_hist[i]) { printf(" %d", i); } }
+                printf("\n");
         }
 
         printf("frames=%d main_time=%llu seconds=%.1f fps=%.2f\n", last_frame, (unsigned long long)main_time, seconds, last_frame / seconds);
