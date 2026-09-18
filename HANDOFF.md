@@ -40,6 +40,12 @@ No files were added to or removed from `files.qip`.
 | 9 | AdamNet only answers accesses to the ADAM's own RAM | `rtl/cv_console.sv` | Nothing visible unless software maps other memory over FExxh |
 | 10 | PCB relocate (03h) implemented; it was a `$finish` stub | `rtl/cv_adamnet.sv` | Nothing found that uses it yet |
 | 11 | DCB status bytes written with 00h or 80h+ now read back, as the RAM they are on an ADAM | `rtl/cv_adamnet.sv` | Keyboard works in ADAM cartridges that drive AdamNet themselves |
+| 12 | **Spinner/roller support**: pin 9 strobe, D4/D5 read-back and the maskable interrupt, plus signal generation from a spinner device or an analog stick. New OSD option **Spinner: Off / Spinner / Stick X / Stick XY**, default Off | `rtl/cv_ctrl.sv`, `rtl/cv_spinner.sv`, `ColecoAdam.sv`, `files.qip` | Super Action Controller roller, Roller Controller and Driving Module games are playable |
+
+Note on change 12: Quartus now compiles `rtl/cv_ctrl.sv` instead of `rtl/cv_ctrl.vhd`. The two
+were identical apart from the spinner, which only the VHDL had, and the SystemVerilog file now
+has it; with the Spinner option off the controller ports read back exactly as before (7Fh, /INT
+high). To go back, swap the two lines in `files.qip`.
 
 Simulator-only changes (no effect on the FPGA):
 - a headless mode with command-line media and input;
@@ -81,6 +87,29 @@ Results from the DE10-Nano run on 2026-09-13 are ticked below and summarised in 
   Press lowercase `c`. Expect the "CHANGING CONFIGURATION" screen (start and end address,
   function keys select tape and disk drives), which is what simulation shows. Before this
   branch, keys did nothing.
+
+### Spinner and roller controllers (fix 12, added 2026-09-18)
+
+Test carts are in `verilator/roms colecovision/controller_tests/`, from the ADAM archive.
+Set OSD **Spinner** to *Stick X* for a gamepad, or *Spinner* if a spinner device is mapped;
+*Stick XY* is the Roller Controller layout (X on port 1, Y on port 2). It defaults to Off, so
+check that first: with Off, nothing below should respond.
+
+- [ ] **Bruce's Controller Tester** (console mode): the bar under keypad #1 tracks the roller,
+  one count per notch, and moves the opposite way when reversed. Controller #2's bar must not
+  move with it. In simulation this counts exactly, through OS-7's own handler.
+- [ ] **Breakout for Roller Controller**: press keypad 1 to start (it ignores the roller in
+  attract mode), then the paddle follows the roller.
+- [ ] **Super Action Controller Tester (1983) (Nuvatec)**, the in-house Coleco cart, if it shows
+  a roller readout.
+- [ ] **A real roller game**: Slither or Victory (Roller Controller), Turbo (Driving Module), or
+  Super Action Baseball/Football (speed roller).
+- [ ] **Computer mode with Spinner on**: SmartWRITER still boots and types normally. The strobe
+  raises the Z80's maskable interrupt, which ADAM software does not normally expect; the ADAM has
+  a /SPINDIS line to suppress exactly that (ATM 2.1.3, MIOC pin 10), which is not modelled. In
+  simulation this is harmless: SmartWRITER booting and typing through 2,700 strobes is
+  byte-identical to the same run without them, so EOS leaves the interrupt masked. Worth one
+  check on real hardware anyway.
 
 ### Expansion RAM (fixes 5 and 6)
 

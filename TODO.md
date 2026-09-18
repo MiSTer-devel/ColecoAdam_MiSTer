@@ -1,17 +1,53 @@
 # TODO
 
-Work list as of 2026-09-13. `STATUS.md` has the background and evidence for the fixes;
+Work list as of 2026-09-18. `STATUS.md` has the background and evidence for the fixes;
 `CLAUDE.md` has the build, simulator and comparison commands.
+
+## 0. Next up, in simulation
+
+Everything here can be done on the dev machine. Ordered by value, longest-running first so it
+can sweep in the background.
+
+- [x] **A. Regression sweep of the cartridge library.** Done 2026-09-18 into `work/carts_spin`:
+  179 cartridges, and every one of the 12 score fields per cartridge is **identical** to the
+  `work/carts` baseline - 2,148 numbers, no differences. So the `cv_ctrl` rewrite, building the
+  `.sv` instead of `cv_ctrl.vhd`, and the two `cv_spinner` instances change nothing with the
+  spinner off. (Only the `status` labels of Evolution and Smurf Paint 'n Play Workshop read
+  differently, because the baseline had `finalize.sh`'s rescore applied and this run has not;
+  their match numbers are the same.)
+  - [ ] Run `./finalize.sh work/carts_spin` if the labels are wanted for the record.
+- [ ] **B. Uridium's freeze** (section 8). The one open GitHub issue that still reproduces.
+- [ ] **C. Gauntlet's maze** (section 8), to settle the rest of that issue.
+- [x] **D. The "black-screen" test cartridges** - they are not black. In Computer mode, where an
+  ADAM diagnostic belongs, System Hardware Test reports "FAIL CONTROLLER PORT #1", "FAIL AUX.
+  VIDEO" and "FAIL AUX. AUDIO", and ADAM Final Test 3.3 waits at a "STATION ID -" prompt for
+  keyboard input. See section 4 for what is left of it.
+- [ ] **E. Triage the sweep titles never looked at** (section 5): Pitfall II, Zenji and
+  Squish 'Em Sam differ; Adventure Pack 1-3, Evolution, Journey to Maraud Mountain and
+  Tournament Tennis are close.
+- [ ] **F. Cosmo Fighter II's star field** (section 6). The oldest open bug and the most work:
+  a CPU trace against ColEm up to the first star write.
+
+Needs hardware, not this machine: the rest of section 1, the spinner checklist in 6a (which also
+needs a new Quartus build, since no `.rbf` on the MiSTer contains `cv_spinner.sv`), and the
+multicart reset check in section 8.
 
 ## 1. Try the September fixes on a MiSTer
 
 - [x] Build with Quartus: done 2026-09-13 with 17.0.2 on the Linux machine. It fits, at 84% of
   RAM blocks, and meets timing.
 - Hardware results from 2026-09-13 are in `HANDOFF.md` section 3a; the kit is in `hardware_tests/`.
+Also confirmed on the DE10-Nano on 2026-09-18, with the same build: the HOME key and the Best of
+Broderbund disk (section 8). The MiSTer is reachable at `mister.local`, and `_AdamTests/` now
+also holds `home_test.sh`, `bb_test.sh` and `B1 Broderbund disk.mgl`, with `config/AdamT_BB.CFG`
+for a test set with "Keypad on numpad" on, which is how to work the hand-controller keypad from
+a keyboard.
+
 - Console mode:
   - [x] Super Cobra: opening screen and attract demo, for the RAM mirroring.
   - [ ] A Crown Jewels game: text screens centred. Not on the test MiSTer's SD card.
-  - [ ] An SGM title: 24K RAM through port 53h, and AY sound. None on the SD card.
+  - [ ] An SGM title: 24K RAM through port 53h, and AY sound. Two are now on this machine, in
+    `verilator/roms colecovision/issue_tests/`, and can be copied to the SD card.
 - Computer mode:
   - [x] SmartWRITER typing, including the first key.
   - [x] A disk boot (Donkey Kong Jr) and a tape boot (Troll's Tale), plus Buck Rogers from tape.
@@ -206,7 +242,16 @@ Most of these wait for keys, so each needs its key sequence worked out (`--key`,
 - [ ] R.I.D. Test v1.0 for Disk Drives (Dymek): disk reads and writes.
 - [ ] RAM Test v1.3 & Utilities (AJM, `CP-M & T-DOS/Utilities/`).
 - [ ] Cartridges:
-  - [ ] System Hardware Test, ADAM Final Test Rev. 3.3 and the Menu Version: black screen in
+  - [x] System Hardware Test and ADAM Final Test Rev. 3.3 run in Computer mode (2026-09-18).
+    System Hardware Test reports "FAIL CONTROLLER PORT #1" plus AUX video and AUX audio, which
+    the core does not emulate. Final Test 3.3 waits at "STATION ID -" for keyboard input.
+    - [ ] Type a station ID into Final Test 3.3 and run its tests through.
+    - [ ] Find what "FAIL CONTROLLER PORT #1" is testing: the string is in the cartridge, so
+      disassemble backwards from it. It is not the spinner lines - the result is identical with
+      a spinner turning - and it is not this branch's `cv_ctrl` change either, since with the
+      spinner idle that port reads exactly as it did before (7Fh).
+    - [ ] Check the Menu Version too.
+  - [ ] Old note, now known to be wrong: black screen in
     both old and new builds. Find out whether they wait for input or need test hardware.
   - [ ] Video RAM Test and 64K Expansion RAM Test: they start. Check results, and re-check the
     RAM test after the expander fix.
@@ -355,6 +400,23 @@ Most of these wait for keys, so each needs its key sequence worked out (`--key`,
   - [ ] no printer
   - [ ] key repeat
 
+## 6a. Spinner and roller controllers
+
+Implemented on 2026-09-18 (`rtl/cv_spinner.sv`, `rtl/cv_ctrl.sv`, OSD "Spinner"); see `STATUS.md`
+and the references in `docs/controllers/`. What is left:
+
+- [ ] Run the hardware checklist for it, `HANDOFF.md` section 3, "Spinner and roller controllers".
+- [ ] Play the real titles and judge the feel: Slither and Victory (Roller Controller), Turbo and
+  Destructor (Driving Module), Super Action Baseball and Football (speed roller). The step rate
+  for an analog stick is MAME's sensitivity, |rate| * 2 steps per second, and may want tuning per
+  game or an OSD sensitivity setting.
+- [ ] Decide whether the Driving Module's pedal should be mapped: it is just a switch to ground
+  on the fire line (Tech Guide V-1), so it may need no work beyond documenting which button it is.
+- [ ] /SPINDIS (ATM 2.1.3, MIOC pin 10) is not modelled. Only needed if ADAM software turns out to
+  be disturbed by spinner interrupts; simulation says SmartWRITER is not.
+- [ ] The Roller Controller passes the controller signals through to its own pass-through ports
+  and has a "keypad only" arrangement in some games; check a two-player Roller title.
+
 ## 7. SuperADAM features on the MiSTer
 
 From colecovisionadam.com/Coleco/adam/SuperADAM.php and lundyelectronics.com/product/superadam-build/.
@@ -371,6 +433,111 @@ From colecovisionadam.com/Coleco/adam/SuperADAM.php and lundyelectronics.com/pro
 | ADAMnet printer (with reset silencer) | Later: no printer support yet; could print to a file |
 | C88 sound balance mod | Only if a speech synthesizer or new audio mixing is added |
 | MicroFox IDE hard disk (slot 1) | Later: emulate from a MiSTer image, with the boot driver in `Boot PROM/` |
+
+## 8. GitHub issues
+
+The three open issues on MiSTer-devel/ColecoAdam_MiSTer, all filed in 2022, checked against this
+branch on 2026-09-18. Test ROMs that were not already in the collection are in
+`verilator/roms colecovision/issue_tests/`, from the ADAM archive.
+
+### #14 "Home" key doesn't work - fixed in 2022, just never closed
+
+The reporter filed it on 2022-06-23 and fixed it himself in PR #16, merged three days later:
+`cv_adamnet.sv` had `9'h16c : key_code = 'h87`, and 87h is the filler this table uses for every
+unmapped key, so HOME really did nothing. It has been 80h since.
+
+Verified in simulation on this branch: `--key esc` into the word processor, type a line, then
+`--key home`, and the cursor jumps from the end of the line back to the first character.
+
+The trap, worth saying when closing it: **SmartWRITER boots in typewriter mode, where HOME and
+the arrow keys do nothing at all.** Escape gets you the word processor, where they work. Both
+keys look equally dead until you do that, which is most likely what the reporter saw in 2022 on
+a build that also lacked the mapping.
+
+- [x] Confirmed on a DE10-Nano (2026-09-18, `ColecoAdam_20260913_accuracy.rbf`): Escape, type
+  "hello world", press HOME, and the cursor moves from the end of the line back onto the "h".
+  Issue closed with the typewriter/word-processor explanation.
+- [ ] Optional: the same check inside SmartLOGO's editor, which is what the reporter wanted it
+  for.
+
+### #9 and the Broderbund part of #12 - no longer reproduces
+
+"The Best of Broderbund collection doesn't get past game title screens", reported for both tape
+and disk. On this branch, both images:
+
+- boot to "PRESS KEYPAD NUMBER ON HAND CONTROLLERS TO SELECT GAME: 1. A.E. 2. CHOPLIFTER";
+- take keypad 1 or 2 and load past the game title to the skill/players menu;
+- start the game: A.E. reaches "GET READY", Choplifter reaches gameplay.
+
+The September library sweep also scored both images `final_match=1.0000` against ColEm. The
+AdamNet and DCB fixes on this branch are the likely reason it works now.
+
+- [x] Confirmed on a DE10-Nano (2026-09-18, `ColecoAdam_20260913_accuracy.rbf`, disk image):
+  the menu appears, keypad 1 selects A.E., a skill key starts it, and the game plays. Driven from
+  the keyboard with "Keypad on numpad" on, via `config/AdamT_BB.CFG` and
+  `_AdamTests/B1 Broderbund disk.mgl`. #9 closed.
+- [ ] Tick Broderbund off #12, which stays open for Uridium and Gauntlet.
+
+### #12 Uridium - still reproduces
+
+Uridium (2019) (Team Pixelboy) (SGM) draws its title screen correctly, then goes to a flat green
+screen and freezes once fire is pressed. Both reporters said in 2022 that it fails the same way
+on the stock MiSTer ColecoVision core, so this is probably shared with upstream rather than
+anything ADAM-specific.
+
+ColEm is no use as a reference here: its own frames for this cartridge are a single colour, so
+it renders the cartridge worse than the core does.
+
+Traced on 2026-09-18 with `SIM_ADDR_PROFILE`, the new `SIM_SPR5_PROFILE` and `--peek v:`. What it
+is **not**:
+
+- Not a dead CPU. The two hot addresses are a `HALT`/`DJNZ` vblank wait at 285Eh and a 300-frame
+  attract wait at A6DDh that also exits on a new button press, so the program is running.
+- Not a lost interrupt. The VDP asserts its interrupt 1,508 times in 1,650 frames, right up to
+  the last one.
+- Not the fifth-sprite trick, though the game does use it: at 00ECh it spins on `IN A,(BF)`,
+  `AND 5F`, `CP 5C`, waiting for the fifth-sprite number as a scanline counter. Our VDP does
+  report fifth sprites (numbers 4, 8, 12, 16, 20 and 28), and that loop is an earlier phase.
+- Not the memory map. The game uses the SGM's 32K mode - port 53h for the RAM at 2000-5FFF, then
+  port 7Fh with lower=01 so 0000-7FFF is all RAM - and runs code from there, which is decoded.
+
+What it is: **the menu works and choosing Start does not.** Left alone, the game reaches its own
+menu - HEWSON & Trilobyte credits with Start / Settings / Instructions - and waits there quite
+correctly. Press fire to choose Start and it draws the Uridium title, then switches the display
+off (flat border colour, and the sprite table holds three sprites and a D0 terminator) and never
+switches it back on. MegaCart paging runs until exactly that moment: 63 bank switches, the last
+at frame 1599, using pages 0, 1, 2, 3 and 5 of the eight. So it stops loading when it should be
+loading a level.
+
+- [ ] Log VDP register 1 writes to find where the display is turned off and what the program is
+  waiting for before it would turn it back on. Also log `megacart_page`: both this and Gauntlet
+  are MegaCarts, and a level load reading the wrong bank would look exactly like this.
+- [ ] Check whether the AY is the thing being waited on. Ports 50h/51h/52h are decoded and
+  `ym2149_audio` is wired up, so reads return something, but an SGM detection routine that expects
+  particular values would not know that.
+- [ ] Compare against the MiSTer ColecoVision core to confirm it fails there too, and if so raise
+  it upstream rather than here.
+
+### #12 Gauntlet - boots; graphics complaint not yet judged
+
+Gauntlet (2019) (Team Pixelboy) (SGM), a 256K MegaCart, reaches its credits screen, takes fire,
+and draws its character-select screen (Thor, Questor, Chyra, Merlin) correctly. Everything up to
+the maze renders properly, so whatever the 2022 report is about starts later. The 2022 complaint was "flashing blocks on the walls ... even when no other sprites are
+moving", which does not happen on real hardware or the ColecoVision core, and rampa069 later
+found that a build using an F18A-style VDP fixed both this and Uridium - which points at the VDP
+rather than the memory map.
+
+- [ ] Get into the maze and compare consecutive frames for blocks that flash on a still screen.
+- [ ] If it reproduces, this is a VDP bug and belongs with the Cosmo Fighter II star field in
+  section 6: both are `rtl/vdp18v` behaviour that ColEm and the F18A get right.
+
+### #12 multicarts and reset
+
+rampa069 noted in 2022: "if a cart don't start, try to load another (eg: dragons lair) or reset
+another time ... once it starts loading seems to be stable."
+
+- [ ] Check on hardware whether loading cartridges back to back is reliable, since `game_reset`
+  and the reset path changed on this branch (fix 4).
 
 ## Old notes, checked
 

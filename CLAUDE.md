@@ -17,6 +17,8 @@ git.
 | `ColecoAdam.qpf/.qsf`, `files.qip` | Quartus project; `releases/` holds built `.rbf` files |
 | `rtl/cv_console.sv` | Console: tv80 Z80, M1 WAIT flip-flop, bus mux, VDP, SN76489, AY, controllers, AdamNet |
 | `rtl/cv_addr_dec.sv` | Memory map (port 7Fh memory select, 3Fh EOS enable, 53h SGM RAM enable, MegaCart paging) and I/O decode |
+| `rtl/cv_ctrl.sv` | Controller ports: keypad/joystick select, the port read mux, and the spinner strobe and interrupt. `cv_ctrl.vhd` is the older VHDL, no longer built |
+| `rtl/cv_spinner.sv` | Turns a spinner device or an analog axis into the pin 7/9 signalling of Coleco's roller controllers |
 | `rtl/cv_adamnet.sv` | AdamNet devices and the PS/2 to ADAM key tables |
 | `rtl/track_loader_adam.sv` | Moves disk/tape blocks between AdamNet and the SD image |
 | `rtl/vdp18v/` | TMS9918A (SystemVerilog). `rtl/vdp18/` is the older VHDL |
@@ -56,8 +58,10 @@ Build and run from `verilator/` (the ROMs load by the relative path `rtl/*.hex`)
 Options: `--cart`, `--console`/`--adam`, `--headless`, `--frames N`, `--shots F1,F2`,
 `--every K`, `--outdir`, `--press KEY@FRAME[:N]` (controller 1), `--disk N FILE`,
 `--tape N FILE`, `--type TEXT@FRAME`, `--key NAME@FRAME` (ADAM keyboard),
-`--exp-ram 64|256|0` (memory expander, matching the OSD's Expansion RAM option). Frames are
-saved as 320×240 PPMs.
+`--exp-ram 64|256|0` (memory expander, matching the OSD's Expansion RAM option),
+`--spin STEPS@FRAME[:N]` and `--spin2` (roller/spinner, matching the OSD's Spinner option),
+`--peek ADDR[:N]@FRAME` (print RAM bytes; the index is the Z80 address, except that console
+mode mirrors its 1K so 7038h is index 6038h). Frames are saved as 320×240 PPMs.
 
 Things to know:
 - Headless speed is about 9 frames/s (1300 frames ≈ 150 s). Runs are single-threaded
@@ -74,7 +78,13 @@ Things to know:
 - `lldb` can't attach to `Vemu` on the dev Mac ("attach failed"). Debug simulator crashes
   (exit 139) by reading the harness code or adding output.
 - To see where Z80 code is looping, run headless with `SIM_ADDR_PROFILE=37`. It samples the
-  address bus every 37 steps and prints the busiest addresses at exit. For AdamNet
+  address bus every 37 steps and prints the busiest addresses at exit. `SIM_SPR5_PROFILE=1`
+  prints the VDP's fifth-sprite activity (games use that number as a scanline counter) and how
+  often the VDP asserted its interrupt, which is what a program sitting in `HALT` is waiting for.
+  `--peek` reads memory at a frame, `v:` for VRAM, which is how to look at the VDP's tables.
+  To build a debug simulator without disturbing a sweep that is using `obj_dir`:
+  `sed 's|obj_dir|obj_probe|g' Makefile > Makefile.probe && make -f Makefile.probe`. Both are
+  gitignored. For AdamNet
   debugging, build with `ADAMNET_TRACE` (commented line in the Makefile). Build into a separate
   directory, e.g. a Makefile copy with `obj_dir` renamed, so runs using `obj_dir` aren't
   disturbed.

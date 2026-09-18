@@ -230,6 +230,33 @@ published privately at https://claude.ai/code/artifact/7b51e7a0-f8a9-4861-95a8-b
 - ADAM Diagnostic, a cartridge that uses controller buttons, now reaches its checkout menu and
   its "MEMORY MODULE TEST" screen in Computer mode.
 
+### Spinner and roller controllers (2026-09-18)
+
+- **Symptom:** nothing drove the speed roller of the Super Action Controller, the Roller
+  Controller trackball or the Expansion Module #2 steering wheel, so those games could not be
+  played. `cv_ctrl.sv` said so: "NOTE: The quadrature decoders are not implemented!"
+- **What was there:** `cv_ctrl.vhd` did have the logic, and `files.qip` built the VHDL, so the
+  FPGA had half the feature and the simulator none - and both tops tied controller pins 7 and 9
+  high, so it could never fire either way.
+- **The hardware:** all three controllers are one circuit, an optical encoder on pins 7 and 9
+  (Expansion Module #2 Technical Guide, Theory of Operation III-1 and schematic V-1, in
+  `docs/controllers/`). ADAM Technical Manual, "Controller Connector Pin Out": pin 7 reads back
+  as D5, pin 9 is an "Indirect /INT input ... Strobe signal: typical 350 usec pulse width".
+  Confirmed against OS-7 itself, whose spinner handler at BIOS 116Ah tests D4 for "was it this
+  controller" and D5 for the direction, and against MAME, which does the same with a long
+  readable strobe and a short interrupt.
+- **Fix:** `rtl/cv_ctrl.sv` implements the strobe, the D4/D5 read-back and the interrupt, and
+  `files.qip` now builds it instead of the VHDL so hardware and simulation share one file. New
+  `rtl/cv_spinner.sv` produces the pin 7/9 signalling from a MiSTer spinner device or an analog
+  stick axis, one per port, with an OSD "Spinner" option (Off, Spinner, Stick X, Stick XY).
+- **Check:**
+  - A unit test of the two modules: 350 µs strobe, 11 µs interrupt, correct D4/D5, and with no
+    movement the port still reads 7Fh with /INT high, which is bit-identical to the old stub.
+  - Bruce's Controller Tester, which counts through OS-7's own routine: 60 steps up counted as
+    exactly +60, 60 down as exactly -60, and 100 steps on controller 2 left controller 1 alone.
+  - Breakout for Roller Controller moves its paddle; the SAS roller test responds; Frogger is
+    unchanged.
+
 ## Still open
 
 - **Cosmo Fighter II's star field is missing.** ColEm draws about 100 dots a frame, the core
@@ -241,9 +268,15 @@ published privately at https://claude.ai/code/artifact/7b51e7a0-f8a9-4861-95a8-b
   - cartridge padding and mirroring
 
   Next idea: compare the CPU trace against ColEm up to the first star write.
-- **System Hardware Test and ADAM Final Test 3.3 show a black screen.** This happens in both the
-  old and new builds, in both modes. They may be waiting for a key, a controller or test
-  hardware; not yet investigated.
+- **System Hardware Test and ADAM Final Test 3.3 are not black after all** (checked 2026-09-18 in
+  Computer mode, where an ADAM diagnostic belongs). Both run:
+  - System Hardware Test draws its title and reports "FAIL CONTROLLER PORT #1", "FAIL AUX.
+    VIDEO" and "FAIL AUX. AUDIO". The two AUX lines are the ADAM's auxiliary video and audio
+    connections, which the core does not emulate, so those are expected. The controller port
+    failure is real and unexplained; it reads the same with a spinner turning, so it is not the
+    pin 7/9 lines.
+  - ADAM Final Test 3.3 draws "ADAM SYSTEM FINAL TEST REV 3.3" and waits at a "STATION ID -"
+    prompt for keyboard input, which is why it looked dead.
 - **ColEm can't be the reference for ADAM-only cartridges.** It switches to ColecoVision mode
   whenever a cartridge is loaded, so those are checked by eye.
 - **Hardware checks still to do** (the rest passed on 2026-09-13, `HANDOFF.md` section 3a):
@@ -272,6 +305,7 @@ published privately at https://claude.ai/code/artifact/7b51e7a0-f8a9-4861-95a8-b
 | Area | Files | What |
 |---|---|---|
 | Hardware fixes | `rtl/cv_addr_dec.sv`, `rtl/cv_console.sv`, `rtl/vdp18v/vdp18_hor_vert.sv`, `ColecoAdam.sv` | The four fixes above |
+| Spinner | `rtl/cv_ctrl.sv`, `rtl/cv_spinner.sv`, `files.qip`, `ColecoAdam.sv`, `verilator/sim.v` | Roller/spinner strobe, interrupt and signal generation; Quartus now builds `cv_ctrl.sv` rather than `cv_ctrl.vhd` |
 | Simulator | `verilator/Makefile`, `verilator/sim.v`, `verilator/sim_main.cpp`, `verilator/sim/sim_video.*`, `verilator/sim/sim_adam_keys.h` | Build fixes for Verilator 5.044, `--no-timing`, no waveform dump, always-on 10.7 MHz enable, headless mode and command-line options, cartridge reset |
 | Debug output | `rtl/bram.sv`, `rtl/dpramv.sv`, `rtl/cv_adamnet.sv`, `rtl/track_loader_adam.sv` | Per-access `$display` behind `SIM_DEBUG` |
 | Comparison | `verilator/compare/` | Framework, ColEm harness and patches, cartridge/ADAM/library scripts, report builder |
