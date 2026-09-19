@@ -1,0 +1,6 @@
+<mistergamedescription>
+  <rbf>_Computer/ColecoAdam_20260913_accuracy</rbf>
+  <setname same_dir="1">AdamT_BB</setname>
+  <file delay="1" type="s" index="0" path="../../../../../media/fat/games/Adam/Best of Broderbund, The (1984) (Coleco).dsk"/>
+  <reset delay="2" hold="1"/>
+</mistergamedescription>

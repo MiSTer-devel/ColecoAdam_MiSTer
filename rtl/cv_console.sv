@@ -73,6 +73,7 @@ module cv_console
    input                        clk_en_10m7_i,
    input                        reset_n_i,
         input                        mode,
+   input                        game_mode_i, // ADAM mode: leave reset as the cartridge reset switch does
    output logic                 por_n_o,
    // Controller Interface ---------------------------------------------------
    input [1:0]                  ctrl_p1_i,
@@ -110,6 +111,14 @@ module cv_console
    output                       cpu_lowerexpansion_ram_we_n_o,
    input [7:0]                  cpu_lowerexpansion_ram_d_i,
    output [7:0]                 cpu_lowerexpansion_ram_d_o,
+   // CPU upper expansion RAM (upper half of the 64K Memory Expander) --------
+   output [14:0]                cpu_expansion_ram_a_o,
+   output                       cpu_expansion_ram_ce_n_o,
+   output                       cpu_expansion_ram_rd_n_o,
+   output                       cpu_expansion_ram_we_n_o,
+   input [7:0]                  cpu_expansion_ram_d_i,
+   output [7:0]                 cpu_expansion_ram_d_o,
+   output [7:0]                 cpu_expansion_bank_o, // port 42h, for expanders past 64K
    //  cpu upper memory
    output [14:0]                cpu_upper_ram_a_o,
    output                       cpu_upper_ram_ce_n_o,
@@ -135,6 +144,9 @@ module cv_console
    output [19:0]                cart_a_o,
    input [7:0]                  cart_d_i,
         output                       cart_rd,
+        // High when cart_d_i is valid. Tie high where the cartridge is in block RAM and
+        // answers in the same cycle, as the simulator does.
+        input                        cart_ready_i,
         input [5:0]                  cart_pages_i,
    // extended ROM Interface ------------------------------------------------
    output [19:0]                ext_rom_a_o,
@@ -239,6 +251,9 @@ module cv_console
   logic          ctrl_en_key_n_s;
   logic          ctrl_en_joy_n_s;
   logic [5:0]    cart_page_s;
+  logic          ram_mirror_s;
+  logic          adamnet_ram_s;
+  assign adamnet_ram_s = ~ram_ce_n_s | ~upper_ram_ce_n_s;
 
   // misc signals
   logic          vdd_s;
@@ -354,20 +369,34 @@ module cv_console
   //   Implements flip-flop U8A which asserts a wait states controlled by M1.
   //
 
-  logic bad_reset;
-  assign bad_reset = reset_n_s | ~m1_n_s;
-  always @(posedge clk_i or posedge bad_reset) //reset_n_s or posedge m1_n_s)
+  logic m1_wait_clr;
+  assign m1_wait_clr = ~reset_n_s | m1_n_s;
+  always @(posedge clk_i or posedge m1_wait_clr)
     begin: m1_wait
-      if (bad_reset) //reset_n_s == 1'b0 | m1_n_s == 1'b1)
+      if (m1_wait_clr)
         m1_wait_q <= 1'b0;
       else
         begin
           if (clk_en_3m58_p_s == 1'b1)
-            m1_wait_q <= '1; //(~m1_wait_q);
+            m1_wait_q <= ~m1_wait_q;
         end
     end
   logic adamnet_wait_n;
-  assign wait_n_s = psg_ready_s & (~m1_wait_q) & (USE_REQ == 0 ? adamnet_wait_n : '1);
+
+  // Hold the CPU while a cartridge read is still in flight. On hardware the cartridge lives in
+  // SDRAM, which answers a new address only after its CAS latency, and later still if an auto
+  // refresh is in the way. Nothing used to wait for it: cart_rd and cart_a_o are combinational
+  // from the address decode and cart_d_i was muxed straight onto the data bus, so the CPU read
+  // whatever the previous access had left there whenever the SDRAM was late. That is rare, but
+  // it lands on cartridge-heavy games - a MegaCart streaming tile data across bank switches
+  // reads far more than a 32K cartridge ever does.
+  //
+  // sdram.sv keeps `ready` high when the byte is already in the latched 16 bit word, so
+  // consecutive bytes cost nothing; this only stalls on a genuine new access.
+  logic cart_wait_n;
+  assign cart_wait_n = ~(cart_rd & ~cart_ready_i);
+
+  assign wait_n_s = psg_ready_s & (~m1_wait_q) & cart_wait_n & (USE_REQ == 0 ? adamnet_wait_n : '1);
 
   //
   //---------------------------------------------------------------------------
@@ -467,6 +496,7 @@ module cv_console
                          .clk_i(clk_i),
                          .reset_n_i(reset_n_i),
                                                                  .mode(mode),
+                         .game_mode_i(game_mode_i),
                          .a_i(a_s),
                          .d_i(d_from_cpu_s),
                                                                  .cart_pages_i(cart_pages_i),
@@ -494,7 +524,9 @@ module cv_console
                          .adam_reset_pcb_n_o(adam_reset_pcb_n_s),
                          .ctrl_r_n_o(ctrl_r_n_s),
                          .ctrl_en_key_n_o(ctrl_en_key_n_s),
-                         .ctrl_en_joy_n_o(ctrl_en_joy_n_s)
+                         .ctrl_en_joy_n_o(ctrl_en_joy_n_s),
+                         .ram_mirror_o(ram_mirror_s),
+                         .exp_bank_o(cpu_expansion_bank_o)
                                                                  );
 
   reg wr_z80;
@@ -524,9 +556,11 @@ module cv_console
     .adam_reset_pcb_n_i(adam_reset_pcb_n_s),
      //.z80_wr(clk_en_3m58_p1_s && ~wr_n_s && wr_z80), //wr_z80),
     //.z80_rd(clk_en_3m58_p1_s && ~rd_n_s && rd_z80),
-    .z80_wr(wr_z80_c),
-    .z80_rd(rd_z80_c),
-    .z80_rd_lvl(~rd_n_s),
+    // AdamNet's master reads the PCB/DCBs from whatever the Z80 has mapped, so only accesses to
+    // the ADAM's own RAM count. Expansion RAM or a cartridge mapped over FExxh is not AdamNet.
+    .z80_wr(wr_z80_c & adamnet_ram_s),
+    .z80_rd(rd_z80_c & adamnet_ram_s),
+    .z80_rd_lvl(~rd_n_s & adamnet_ram_s),
     .z80_addr(a_s),
     .z80_data_wr(d_from_cpu_s),
     .z80_data_rd(d_to_cpu_s),
@@ -576,15 +610,18 @@ module cv_console
   assign writer_rom_ce_n_o = writer_rom_ce_n_s;
   assign cpu_ram_ce_n_o = ram_ce_n_s;
   assign cpu_lowerexpansion_ram_ce_n_o = lowerexpansion_ram_ce_n_s;
+  assign cpu_expansion_ram_ce_n_o = expansion_ram_ce_n_s;
   assign cpu_upper_ram_ce_n_o = upper_ram_ce_n_s;
 
  // assign cpu_expansion_rom_ce_n_o = expansion_rom_ce_n_s;
 
   assign cpu_ram_we_n_o = wr_n_s;
   assign cpu_lowerexpansion_ram_we_n_o = wr_n_s;
+  assign cpu_expansion_ram_we_n_o = wr_n_s;
   assign cpu_upper_ram_we_n_o = wr_n_s;
   assign cpu_ram_rd_n_o = rd_n_s;
   assign cpu_lowerexpansion_ram_rd_n_o = rd_n_s;
+  assign cpu_expansion_ram_rd_n_o = rd_n_s;
   assign cpu_upper_ram_rd_n_o = rd_n_s;
   assign cart_rd = ~cartridge_rom_ce_n_s;
 
@@ -609,6 +646,7 @@ module cv_console
     logic [7:0]        d_writer_v;
     logic [7:0]        d_ram_v;
     logic [7:0]        d_lowerexpansion_ram_v;
+    logic [7:0]        d_expansion_ram_v;
     logic [7:0]        d_upper_ram_v;
     logic [7:0]        d_expansion_rom_v;
          logic [7:0]        d_cartridge_rom_v;
@@ -625,6 +663,7 @@ module cv_console
          d_expansion_rom_v = '1;
          d_cartridge_rom_v = '1;
     d_lowerexpansion_ram_v  = '1;
+    d_expansion_ram_v  = '1;
     d_vdp_v  = '1;
     d_ctrl_v = '1;
          d_ay_v   = '1;
@@ -634,6 +673,7 @@ module cv_console
     if (~writer_rom_ce_n_s)     d_writer_v = writer_rom_d_i;
     if (~ram_ce_n_s)            d_ram_v  = cpu_ram_d_i;
     if (~lowerexpansion_ram_ce_n_s)            d_lowerexpansion_ram_v  = cpu_lowerexpansion_ram_d_i;
+    if (~expansion_ram_ce_n_s)  d_expansion_ram_v = cpu_expansion_ram_d_i;
     if (~upper_ram_ce_n_s)      d_upper_ram_v = adamnet_sel ? adamnet_dout : cpu_upper_ram_d_i;
     if (~expansion_rom_ce_n_s)  d_expansion_rom_v = ext_rom_d_i;
     if (~cartridge_rom_ce_n_s)  d_cartridge_rom_v = cart_d_i;
@@ -643,7 +683,7 @@ module cv_console
 
     d_to_cpu_s = d_bios_v & d_eos_v & d_writer_v & d_ram_v & d_upper_ram_v
                     & d_expansion_rom_v & d_cartridge_rom_v & d_vdp_v
-                                        & d_ctrl_v & d_lowerexpansion_ram_v & d_ay_v;
+                                        & d_ctrl_v & d_lowerexpansion_ram_v & d_expansion_ram_v & d_ay_v;
   end
 
 
@@ -705,11 +745,14 @@ end
   assign writer_rom_a_o    = a_s[14:0];
   assign eos_rom_a_o       = a_s[13:0];
   assign bios_rom_a_o      = a_s[12:0];
-  assign cpu_ram_a_o       = a_s[14:0];
+  // the ColecoVision's 1K repeats through 6000-7FFF
+  assign cpu_ram_a_o       = ram_mirror_s ? {5'b11000, a_s[9:0]} : a_s[14:0];
   assign cpu_lowerexpansion_ram_a_o = a_s[14:0];
+  assign cpu_expansion_ram_a_o = a_s[14:0];
   assign cpu_upper_ram_a_o = a_s[14:0];
   assign cpu_ram_d_o       = d_from_cpu_s;
   assign cpu_lowerexpansion_ram_d_o       = d_from_cpu_s;
+  assign cpu_expansion_ram_d_o       = d_from_cpu_s;
   assign cpu_upper_ram_d_o = d_from_cpu_s;
   assign cart_a_o ={cart_page_s, a_s[13:0]};
 

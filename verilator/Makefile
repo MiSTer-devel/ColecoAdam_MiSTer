@@ -10,11 +10,13 @@ V_DEFINE = +define+debug=1 +define+SIMULATION=1   -CFLAGS "-I../sim/imgui -I../s
 	-I../$(RTL)/vdp18v \
 	-I../$(RTL)/tv80 \
 	-I../$(RTL)/sn76489 \
-        --timing
+        --no-timing
+# --no-timing: tv80 writes its bus signals with "<= #1", which --timing runs as slow coroutines
 #V_DEFINE += --converge-limit 2000 -Wno-WIDTH -Wno-IMPLICIT -Wno-MODDUP -Wno-UNSIGNED -Wno-CASEINCOMPLETE -Wno-CASEX -Wno-SYMRSVDWORD -Wno-COMBDLY -Wno-INITIALDLY -Wno-BLKANDNBLK -Wno-UNOPTFLAT -Wno-SELRANGE -Wno-CMPCONST -Wno-CASEOVERLAP -Wno-PINMISSING -Wno-MULTIDRIVEN
 #V_DEFINE += --threads 8  # this slows it way down
-V_DEFINE += --trace-fst
-V_DEFINE +=
+#V_DEFINE += +define+SIM_DEBUG=1  # per-access $display logging, very slow
+#V_DEFINE += +define+ADAMNET_TRACE=1  # AdamNet keyboard trace: keys queued, keyboard DCB commands, deliveries
+V_DEFINE += -Wno-fatal
 
 UNAME_S := $(shell uname -s)
 
@@ -59,6 +61,7 @@ V_SRC = \
 	rtl/YM2149.sv \
 	../rtl/cv_clock.sv \
 	../rtl/cv_ctrl.sv \
+	../rtl/cv_spinner.sv \
 	../rtl/sdram.sv \
 	../rtl/cv_addr_dec.sv \
 	../rtl/cv_console.sv \
@@ -96,7 +99,7 @@ VOUT = obj_dir/Vemu.cpp
 all: $(EXE)
 
 $(VOUT): $(V_SRC)  Makefile
-	$V -cc $(V_OPT) -LDFLAGS "$(LDFLAGS) " -exe --trace --Mdir ./obj_dir $(V_DEFINE) $(V_INC) $(TOP) -CFLAGS $(CFLAGS) $(V_SRC) $(C_SRC)
+	$V -cc $(V_OPT) -LDFLAGS "$(LDFLAGS) " -exe --Mdir ./obj_dir $(V_DEFINE) $(V_INC) $(TOP) -CFLAGS $(CFLAGS) $(V_SRC) $(C_SRC)
 
 $(EXE): $(VOUT) $(C_SRC)
 #	(cd obj_dir; make OPT="-fauto-inc-dec -fdce -fdefer-pop -fdse -ftree-ccp -ftree-ch -ftree-fre -ftree-dce -ftree-dse" -f Vemu.mk)

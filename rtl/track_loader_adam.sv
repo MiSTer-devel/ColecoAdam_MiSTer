@@ -122,7 +122,7 @@ module track_loader_adam
       // the directory corruption -- the SD read does happen, just too late.
       // sd_ack is per-drive and is the interface's real completion signal.
       //
-      // Verilator never showed this because sim_blkdevice zeroes sd_buff_addr the
+      // The simulator never showed this because sim_blkdevice zeroes sd_buff_addr the
       // moment it sees sd_rd/sd_wr, so the core can never observe the stale 511.
       READ: begin
         if (~old_ack & sd_ack) begin

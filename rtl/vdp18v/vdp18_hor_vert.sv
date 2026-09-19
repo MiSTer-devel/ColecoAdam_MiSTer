@@ -129,6 +129,12 @@ module vdp18_hor_vert
   //   Implements the horizontal and vertical counters.
   //
 
+  // Text mode has a 19-pixel left border and a 25-pixel right border instead of
+  // 13 and 15 (TMS9918A data manual, Table 3-3), so sync and blanking come
+  // 6 pixels earlier relative to the first active pixel.
+  logic signed [0:8] text_shift_s;
+  assign text_shift_s = (opmode_i == OPMODE_TEXTM) ? 9'sd6 : 9'sd0;
+
   always @(posedge clk_i, posedge reset_i )
     begin: counters
       if (reset_i)
@@ -159,13 +165,13 @@ module vdp18_hor_vert
                 cnt_vert_q <= cnt_vert_q + 1;
 
               // Horizontal sync ----------------------------------------------------
-              if (cnt_hor_q == -64)
+              if (cnt_hor_q == -64 - text_shift_s)
                 hsync_n_o <= 1'b0;
-              else if (cnt_hor_q == -38)
+              else if (cnt_hor_q == -38 - text_shift_s)
                 hsync_n_o <= 1'b1;
-              if (cnt_hor_q == -72)
+              if (cnt_hor_q == -72 - text_shift_s)
                 hblank_q <= 1'b1;
-              else if (cnt_hor_q == -14)
+              else if (cnt_hor_q == -14 - text_shift_s)
                 hblank_q <= 1'b0;
 
               // Vertical sync ------------------------------------------------------

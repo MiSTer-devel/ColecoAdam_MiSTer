@@ -50,6 +50,7 @@ module cv_addr_dec (
     input               clk_i,
     input               reset_n_i,
     input               mode,
+    input               game_mode_i,
     input        [15:0] a_i,
     input        [ 7:0] d_i,
     input        [ 5:0] cart_pages_i,
@@ -77,7 +78,9 @@ module cv_addr_dec (
     output logic        adam_reset_pcb_n_o,
     output logic        ctrl_r_n_o,
     output logic        ctrl_en_key_n_o,
-    output logic        ctrl_en_joy_n_o
+    output logic        ctrl_en_joy_n_o,
+    output logic        ram_mirror_o,
+    output logic [7:0]  exp_bank_o
 );
 
   logic       megacart_en;
@@ -91,6 +94,12 @@ module cv_addr_dec (
   logic [1:0] upper_mem_nadam;
   logic [1:0] lower_mem;
   logic [1:0] upper_mem;
+  logic       sgm_ram_en;
+
+  // A ColecoVision has 1K of RAM, decoded at 6000-7FFF and mirrored through it, with
+  // 2000-5FFF left to the expansion port. The ADAM has 24K there, as does the Super Game
+  // Module once port 53h enables it.
+  assign ram_mirror_o = mode & ~sgm_ram_en & (lower_mem == 2'b11);
   //---------------------------------------------------------------------------
   // Process dec
   //
@@ -148,7 +157,8 @@ module cv_addr_dec (
         if (lower_mem == 2'b11) begin  // OS7 / 24k RAM
           case (a_i[15:13])
             3'b000:                         bios_rom_ce_n_o = '0;
-            3'b001, 3'b010, 3'b011:         ram_ce_n_o = '0;  // 2000 - 7fff = 24k
+            3'b001, 3'b010:                 if (~ram_mirror_o) ram_ce_n_o = '0;  // 2000 - 5fff
+            3'b011:                         ram_ce_n_o = '0;  // 6000 - 7fff
             3'b100, 3'b101, 3'b110, 3'b111: cartridge_rom_ce_n_o = '0;
             default: begin
             end
@@ -198,7 +208,11 @@ module cv_addr_dec (
       if (a_i[7:0] == 8'h50 && ~wr_n_i) ay_addr_we_n_o = '0;
       else if (a_i[7:0] == 8'h51 && ~wr_n_i) ay_data_we_n_o = '0;
       else if (a_i[7:0] == 8'h52 && ~rd_n_i) ay_data_rd_n_o = '0;
-      else if (a_i[7:0] == 8'h3f && ~wr_n_i && d_i == 8'h0F) adam_reset_pcb_n_o = '0;
+      // The ADAM decodes these by range, like the ColecoVision ports above: its memory board
+      // (MIOC U7) sees only BA13-BA15 and the game board's AUX DECODE lines, not A0-A4. Ports
+      // 20h-3Fh are net reset / EOS enable and 60h-7Fh memory map control; Coleco's 64K
+      // Expansion RAM Test writes 20h and 60h.
+      else if (a_i[7:5] == 3'b001 && ~wr_n_i && d_i == 8'h0F) adam_reset_pcb_n_o = '0;
     end
   end
 
@@ -206,15 +220,26 @@ module cv_addr_dec (
   //---------------------------------------------------------------------------
   always @(negedge reset_n_i, posedge clk_i) begin : m_adam
     if (~reset_n_i) begin
-      lower_mem_adam <= mode ? 2'b11 : 2'b00;  // computer mode
-      upper_mem_adam <= mode ? 2'b11 : 2'b00;
+      // Console, or the ADAM's cartridge reset: OS-7 + 24K RAM and the cartridge. The ADAM's
+      // computer reset selects SmartWRITER and intrinsic RAM (ADAM Technical Manual 2.3, 2.6).
+      lower_mem_adam <= (mode | game_mode_i) ? 2'b11 : 2'b00;
+      upper_mem_adam <= (mode | game_mode_i) ? 2'b11 : 2'b00;
+      sgm_ram_en <= 1'b0;
+      exp_bank_o <= 8'h00;
     end else begin
-      if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:0] == 8'h7f)) begin
+      // Expansion RAM bank on memory expanders past 64K (MESS adam.c: "42-42 (W) = Expansion
+      // RAM page selection"). T-DOS and RAMTEST v2.0 write a bank number here and then use the
+      // ordinary expansion windows of port 7Fh; each bank is 64K.
+      if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:0] == 8'h42))
+        exp_bank_o <= d_i;
+      if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:0] == 8'h53))
+        sgm_ram_en <= d_i[0];
+      if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:5] == 3'b011)) begin
         $display("D CHANGING MEM 7F lower %x upper %x", d_i[1:0], d_i[3:2]);
         lower_mem_adam <= d_i[1:0];
         upper_mem_adam <= d_i[3:2];
       end else
-		  if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:0] == 8'h3f)) begin
+		  if (~iorq_n_i && mreq_n_i && rfsh_n_i && ~wr_n_i && (a_i[7:5] == 3'b001)) begin
         $display("B SETTING MEMORY MODE 3F? addr %x data %x", a_i, d_i);
         last_35_reset_bit <= d_i[0];
         eos_en <= d_i[1];

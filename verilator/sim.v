@@ -17,6 +17,7 @@ module emu
    input                 soft_reset,
    input                 menu,
    input                 adam,
+   input [1:0]           exp_ram,     // memory expander: 0 = 64K, 1 = 256K (port 42h banks), 2 = none
 
    input [31:0]          joystick_0,
    input [31:0]          joystick_1,
@@ -52,6 +53,9 @@ module emu
    input [8:0]           spinner_3,
    input [8:0]           spinner_4,
    input [8:0]           spinner_5,
+
+   // 0 off, 1 spinner device, 2 stick X, 3 stick XY (the OSD's Spinner option)
+   input [1:0]           spin_mode,
 
         // ps2 alternative interface.
         // [8] - extended, [9] - pressed, [10] - toggles with every press/release
@@ -102,12 +106,6 @@ module emu
 
 );
 
-  initial begin
-    $dumpfile("test.fst");
-    $dumpvars;
-    //$dumpvars(0,TOP.emu.g_TL[0].track_loader_a);
-  end
-
  wire [15:0] joystick_a0 =  joystick_l_analog_0;
 
 wire UART_CTS;
@@ -118,14 +116,15 @@ wire UART_DTR;
 wire UART_DSR;
 
 // CHEAT THE CLOCK TO SPEED IT UP
- reg ce_10m7 = 0;
+// The sim's clk_sys is the 10.7 MHz rate itself, so ce_10m7 is always on. Hardware runs
+// clk_sys at twice that with every other cycle idle; skipping those doubles sim speed.
+ wire ce_10m7 = 1'b1;
  reg ce_5m3 = 0;
  always @(posedge clk_sys) begin
-       reg [1:0] div;
+       reg div;
 
-       div <= div+1'd1;
-       ce_10m7 <= !div[0];
-       ce_5m3  <= !div[1:0];
+       div <= ~div;
+       ce_5m3  <= !div;
  end
 
 /////////////////  Memory  ////////////////////////
@@ -225,7 +224,9 @@ dpramv #(8, 15) ram
     ramb_addr_del <= ramb_addr;
   end
 
+`ifdef SIM_DEBUG
   always @* if (ramb_rd) $display("Readingb %0x: %0x", ramb_addr_del[14:0], ramb_din);
+`endif
   assign ramb_din = ~ramb_addr[15] ? int_ramb_din[0] : int_ramb_din[1];
 
 wire [13:0] vram_a;
@@ -255,15 +256,34 @@ spramv #(14) vram
    wire lowerexpansion_ram_we_n;
    wire [7:0] lowerexpansion_ram_di;
    wire [7:0] lowerexpansion_ram_do;
-  spramv #(15) lowerexpansion_ram
+  // Memory expander, as in ColecoAdam.sv; exp_ram replaces the OSD bits: 0 = 64K, 1 = 256K, 2 = none
+  wire [14:0] expansion_ram_a;
+  wire        expansion_ram_ce_n;
+  wire        expansion_ram_we_n;
+  wire  [7:0] expansion_ram_di;
+  wire  [7:0] expansion_ram_do;
+  wire  [7:0] expansion_bank;
+
+  wire        exp_ram_none  = exp_ram[1];
+  // A bank past the last one fitted must not answer; see ColecoAdam.sv for why.
+  wire        exp_bank_absent = exp_ram[0] & (expansion_bank > 8'd3);
+  wire        exp_ram_off   = exp_ram_none | exp_bank_absent;
+  wire  [1:0] exp_ram_bank  = exp_ram[0] ? expansion_bank[1:0] : 2'b00;
+  wire        exp_ram_upper = ~expansion_ram_ce_n;
+  wire        exp_ram_we    = exp_ram_upper ? ~expansion_ram_we_n
+                                            : ~(lowerexpansion_ram_we_n | lowerexpansion_ram_ce_n);
+  wire  [7:0] exp_ram_q;
+  spramv #(18) expansion_ram
     (
      .clock(clk_sys),
-     .address(lowerexpansion_ram_a),
-     .wren(ce_10m7 & ~(lowerexpansion_ram_we_n | lowerexpansion_ram_ce_n)),
-     .data(lowerexpansion_ram_do),
-     .q(lowerexpansion_ram_di),
+     .address({exp_ram_bank, exp_ram_upper, exp_ram_upper ? expansion_ram_a : lowerexpansion_ram_a}),
+     .wren(ce_10m7 & exp_ram_we & ~exp_ram_off),
+     .data(exp_ram_upper ? expansion_ram_do : lowerexpansion_ram_do),
+     .q(exp_ram_q),
      .cs(1'b1)
      );
+  assign lowerexpansion_ram_di = exp_ram_off ? 8'hFF : exp_ram_q;
+  assign expansion_ram_di      = exp_ram_off ? 8'hFF : exp_ram_q;
 
 
 wire [14:0] upper_ram_a;
@@ -357,9 +377,65 @@ wire [1:0] ctrl_p3;
 wire [1:0] ctrl_p4;
 wire [1:0] ctrl_p5;
 wire [1:0] ctrl_p6;
-wire [1:0] ctrl_p7 = 2'b11;
+wire [1:0] ctrl_p7;        // D5, spinner direction  (driven by cv_spinner below)
 wire [1:0] ctrl_p8;
-wire [1:0] ctrl_p9 = 2'b11;
+wire [1:0] ctrl_p9;        // D4 + /INT spinner strobe
+
+//////////////// Spinner / roller controllers /////////////////
+// Same wiring as ColecoAdam.sv; see rtl/cv_spinner.sv. The simulator has no
+// OSD, so spin_mode comes in as a port (--spin on the command line).
+
+// MiSTer spinner device: [7:0] is a signed step count, [8] toggles per update
+reg  [1:0] spin_tgl_a, spin_tgl_b;
+always @(posedge clk_sys) if (ce_10m7) begin
+        spin_tgl_a <= {spin_tgl_a[0], spinner_0[8]};
+        spin_tgl_b <= {spin_tgl_b[0], spinner_1[8]};
+end
+
+wire signed [7:0] spin_step_a = $signed(spinner_0[7:0]);
+wire signed [7:0] spin_step_b = $signed(spinner_1[7:0]);
+wire        [7:0] spin_mag_a  = spin_step_a[7] ? (~spin_step_a + 8'd1) : spin_step_a;
+wire        [7:0] spin_mag_b  = spin_step_b[7] ? (~spin_step_b + 8'd1) : spin_step_b;
+
+wire spin_dev_en = (spin_mode == 2'd1);
+wire spin_step_en_a = spin_dev_en & (spin_tgl_a[1] ^ spin_tgl_a[0]);
+wire spin_step_en_b = spin_dev_en & (spin_tgl_b[1] ^ spin_tgl_b[0]);
+
+wire signed [7:0] spin_stick_x = $signed(joystick_l_analog_0[7:0]);
+wire signed [7:0] spin_stick_y = $signed(joystick_l_analog_0[15:8]);
+
+wire signed [7:0] spin_rate_a =
+        ((spin_mode >= 2'd2) && ((spin_stick_x > 8'sd24) || (spin_stick_x < -8'sd24)))
+        ? spin_stick_x : 8'sd0;
+wire signed [7:0] spin_rate_b =
+        ((spin_mode == 2'd3) && ((spin_stick_y > 8'sd24) || (spin_stick_y < -8'sd24)))
+        ? spin_stick_y : 8'sd0;
+
+cv_spinner spinner_a
+(
+        .clk_i     (clk_sys),
+        .clk_en_i  (ce_10m7),
+        .reset_n_i (~reset),
+        .step_en_i (spin_step_en_a),
+        .step_dir_i(~spin_step_a[7]),
+        .step_cnt_i((spin_mag_a > 8'd31) ? 5'd31 : spin_mag_a[4:0]),
+        .rate_i    (spin_rate_a),
+        .p7_o      (ctrl_p7[0]),
+        .p9_o      (ctrl_p9[0])
+);
+
+cv_spinner spinner_b
+(
+        .clk_i     (clk_sys),
+        .clk_en_i  (ce_10m7),
+        .reset_n_i (~reset),
+        .step_en_i (spin_step_en_b),
+        .step_dir_i(~spin_step_b[7]),
+        .step_cnt_i((spin_mag_b > 8'd31) ? 5'd31 : spin_mag_b[4:0]),
+        .rate_i    (spin_rate_b),
+        .p7_o      (ctrl_p7[1]),
+        .p9_o      (ctrl_p9[1])
+);
 
 wire [7:0] R,G,B;
 wire hblank, vblank;
@@ -387,6 +463,13 @@ wire  [7:0] ext_rom_d=8'hff;
 
   logic mode = ~adam;
 
+  // Loading a cartridge in Adam mode acts as the ADAM's cartridge reset switch (see ColecoAdam.sv)
+  reg game_reset = 0;
+  always @(posedge clk_sys) begin
+     if (ioctl_download && ioctl_index[5:0] == 1) game_reset <= 1;
+     else if (soft_reset) game_reset <= 0;
+  end
+
   cv_console
     #
     (
@@ -404,6 +487,7 @@ wire  [7:0] ext_rom_d=8'hff;
      //.dahjeeA_i(extram),
      //.adam(adam),
      .mode(mode),
+     .game_mode_i(game_reset),
 
      .ctrl_p1_i(ctrl_p1),
      .ctrl_p2_i(ctrl_p2),
@@ -437,6 +521,12 @@ wire  [7:0] ext_rom_d=8'hff;
      .cpu_lowerexpansion_ram_ce_n_o(lowerexpansion_ram_ce_n),
      .cpu_lowerexpansion_ram_d_i(lowerexpansion_ram_di),
      .cpu_lowerexpansion_ram_d_o(lowerexpansion_ram_do),
+     .cpu_expansion_ram_a_o(expansion_ram_a),
+     .cpu_expansion_ram_we_n_o(expansion_ram_we_n),
+     .cpu_expansion_ram_ce_n_o(expansion_ram_ce_n),
+     .cpu_expansion_ram_d_i(expansion_ram_di),
+     .cpu_expansion_ram_d_o(expansion_ram_do),
+     .cpu_expansion_bank_o(expansion_bank),
 
      .cpu_upper_ram_a_o(upper_ram_a),
      .cpu_upper_ram_we_n_o(upper_ram_we_n),
@@ -461,6 +551,7 @@ wire  [7:0] ext_rom_d=8'hff;
      .cart_a_o(cart_a),
      .cart_d_i(cart_d),
      .cart_rd(cart_rd),
+     .cart_ready_i(1'b1),   // the simulator keeps the cartridge in block RAM, always ready
 
      .ext_rom_a_o(ext_rom_a),
      .ext_rom_d_i(ext_rom_d),

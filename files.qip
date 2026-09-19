@@ -25,8 +25,12 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/vdp18v/vdp18_hor_vert.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/vdp18v/vdp18_addr_mux.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/vdp18v/vdp18_core.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cv_addr_dec.sv
-#set_global_assignment -name SYSTEMVERILOG_FILE rtl/cv_ctrl.sv
-set_global_assignment -name VHDL_FILE rtl/cv_ctrl.vhd
+# cv_ctrl.sv now carries the spinner strobe/interrupt logic that only cv_ctrl.vhd
+# had, so hardware and the Verilator simulator build the same file. cv_ctrl.vhd is
+# kept for reference, unused, like rtl/vdp18 beside rtl/vdp18v.
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/cv_ctrl.sv
+#set_global_assignment -name VHDL_FILE rtl/cv_ctrl.vhd
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/cv_spinner.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cv_clock.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cv_por.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cv_console.sv

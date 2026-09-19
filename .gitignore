@@ -42,3 +42,21 @@ obj_dir
 *.fst
 *.log
 Software/*
+
+# Local only: licence-restricted reference source, software library, ROMs and test media
+ColEm56-Source/
+verilator/SoftwareFromMiSTer/
+verilator/roms colecovision/
+verilator/adam.tar
+verilator/*.dsk
+verilator/*.ddp
+verilator/*.zip
+verilator/imgui.ini
+.DS_Store
+verilator/obj_probe*/
+verilator/obj_trace/
+verilator/Makefile.probe*
+verilator/Makefile.trace
+
+# Local reference material: datasheets, schematics and manuals, not part of the core
+docs/

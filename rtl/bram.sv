@@ -53,7 +53,9 @@ always @(posedge clock_b) begin
         q_b      <= data_b;
         mem[address_b] <= data_b;
 
+`ifdef SIM_DEBUG
         $display("writingb: %x %x",address_b,data_b);
+`endif
     end
 end
 

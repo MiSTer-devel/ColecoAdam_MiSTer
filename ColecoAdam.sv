@@ -239,8 +239,10 @@ parameter CONF_STR = {
         "O3,Joysticks swap,No,Yes;",
         "OD,Keypad on numpad,Off,On;",
         "OE,Stick keypad,Off,On;",
+        "OFG,Spinner,Off,Spinner,Stick X,Stick XY;",
         "-;",
         "OC,Mode,Computer,Console;",
+        "O45,Expansion RAM,64K,256K,None;",
         "R0,Reset;",
         "J,Fire 1,Fire 2,*,#,0,1,2,3,4,5,6,7,8,9,Purple Tr,Blue Tr;",
         "V,v",`BUILD_DATE
@@ -303,6 +305,8 @@ wire [10:0] ps2_key;
 wire [15:0] joy0_l_analog, joy0_r_analog;
 wire [15:0] joy1_l_analog, joy1_r_analog;
 
+wire  [8:0] spinner_0, spinner_1;
+
 hps_io #(.CONF_STR(CONF_STR), .VDNUM(TOT_DISKS)) hps_io
 (
    .clk_sys(clk_sys),
@@ -339,7 +343,11 @@ hps_io #(.CONF_STR(CONF_STR), .VDNUM(TOT_DISKS)) hps_io
    .joystick_l_analog_0(joy0_l_analog),
    .joystick_r_analog_0(joy0_r_analog),
    .joystick_l_analog_1(joy1_l_analog),
-   .joystick_r_analog_1(joy1_r_analog)
+   .joystick_r_analog_1(joy1_r_analog),
+
+   // spinner devices, for the roller controllers
+   .spinner_0(spinner_0),
+   .spinner_1(spinner_1)
 );
 
 
@@ -357,6 +365,14 @@ always @(posedge clk_sys) begin
 end
 
 wire reset = RESET | status[0] | buttons[1] | old_mode != mode | ioctl_download;
+
+// Loading a cartridge in Computer mode acts as the ADAM's cartridge reset switch: it starts with
+// OS-7, 24K of RAM and the cartridge (ADAM Technical Manual 2.6). Reset returns to SmartWRITER.
+reg game_reset = 0;
+always @(posedge clk_sys) begin
+        if (ioctl_download && ioctl_index[5:0] == 1) game_reset <= 1;
+        else if (RESET | status[0] | buttons[1] | old_mode != mode) game_reset <= 0;
+end
 
 /////////////////  Memory  ////////////////////////
 
@@ -471,15 +487,44 @@ wire lowerexpansion_ram_we_n;
 wire [7:0] lowerexpansion_ram_di;
 wire [7:0] lowerexpansion_ram_do;
 
-spramv #(15) lowerexpansion_ram
+// Memory expander: port 7Fh bits 10 put expansion RAM in the lower or upper 32K window (ADAM
+// Technical Manual 2.2). A bank is one lower plus one upper 32K; expanders past 64K pick the bank
+// through port 42h (MESS adam.c). The OSD offers the plain 64K expander (bank 0 only; no
+// addressor), 256K (4 banks) or none.
+wire [14:0] expansion_ram_a;
+wire        expansion_ram_ce_n;
+wire        expansion_ram_we_n;
+wire  [7:0] expansion_ram_di;
+wire  [7:0] expansion_ram_do;
+wire  [7:0] expansion_bank;
+
+wire        exp_ram_none  = status[5];
+// A 256K expander holds four 64K banks, and a bank number past the last one must not answer.
+// Software counts banks by writing one and reading it back until a bank stops answering, so
+// letting bank 4 alias back to bank 0 makes 256K look like more: PowerPAINT's memory sizer
+// (disk offset 1300h) counts up to four banks and then reports its maximum, which is why it
+// showed 512 on the 256K setting. The 64K expander has no bank register at all, so port 42h
+// does nothing there and every bank is the same 64K.
+wire        exp_bank_absent = status[4] & (expansion_bank > 8'd3);
+wire        exp_ram_off   = exp_ram_none | exp_bank_absent;
+wire  [1:0] exp_ram_bank  = status[4] ? expansion_bank[1:0] : 2'b00;
+wire        exp_ram_upper = ~expansion_ram_ce_n;
+wire        exp_ram_we    = exp_ram_upper ? ~expansion_ram_we_n
+                                          : ~(lowerexpansion_ram_we_n | lowerexpansion_ram_ce_n);
+wire  [7:0] exp_ram_q;
+
+spramv #(18) expansion_ram
     (
      .clock(clk_sys),
-     .address(lowerexpansion_ram_a),
-     .wren(ce_10m7 & ~(lowerexpansion_ram_we_n | lowerexpansion_ram_ce_n)),
-     .data(lowerexpansion_ram_do),
-     .q(lowerexpansion_ram_di),
+     .address({exp_ram_bank, exp_ram_upper, exp_ram_upper ? expansion_ram_a : lowerexpansion_ram_a}),
+     .wren(ce_10m7 & exp_ram_we & ~exp_ram_off),
+     .data(exp_ram_upper ? expansion_ram_do : lowerexpansion_ram_do),
+     .q(exp_ram_q),
      .cs(1'b1)
      );
+
+assign lowerexpansion_ram_di = exp_ram_off ? 8'hFF : exp_ram_q;
+assign expansion_ram_di      = exp_ram_off ? 8'hFF : exp_ram_q;
 
 wire [14:0] upper_ram_a;
 wire        upper_ram_we_n, upper_ram_ce_n;
@@ -508,6 +553,7 @@ wire  [7:0] upper_ram_do;
 wire [19:0] cart_a;
 wire  [7:0] cart_d;
 wire        cart_rd;
+wire        cart_ready;   // from the SDRAM controller: cart_d is valid
 
 reg [5:0] cart_pages = 6'b0;
 //always @(posedge clk_sys) if(ioctl_download) cart_pages <= ioctl_addr[19:14];
@@ -527,7 +573,8 @@ sdram sdram
    .dout(cart_d),
    .din(ioctl_dout),
    .we(ioctl_wr),
-   .ready()
+   // Was unconnected, so nothing waited for a read to complete; see cv_console's cart_wait_n.
+   .ready(cart_ready)
 );
 
 
@@ -550,9 +597,9 @@ wire [1:0] ctrl_p3;
 wire [1:0] ctrl_p4;
 wire [1:0] ctrl_p5;
 wire [1:0] ctrl_p6;
-wire [1:0] ctrl_p7 = 2'b11;
+wire [1:0] ctrl_p7;        // D5, spinner direction  (driven by cv_spinner below)
 wire [1:0] ctrl_p8;
-wire [1:0] ctrl_p9 = 2'b11;
+wire [1:0] ctrl_p9;        // D4 + /INT spinner strobe
 
 wire [7:0] R,G,B;
 wire hblank, vblank;
@@ -589,6 +636,7 @@ cv_console
         .reset_n_i(~reset),
         .por_n_o(),
         .mode(~mode),
+        .game_mode_i(game_reset),
         .ctrl_p1_i(ctrl_p1),
         .ctrl_p2_i(ctrl_p2),
         .ctrl_p3_i(ctrl_p3),
@@ -621,6 +669,12 @@ cv_console
         .cpu_lowerexpansion_ram_ce_n_o(lowerexpansion_ram_ce_n),
         .cpu_lowerexpansion_ram_d_i(lowerexpansion_ram_di),
         .cpu_lowerexpansion_ram_d_o(lowerexpansion_ram_do),
+        .cpu_expansion_ram_a_o(expansion_ram_a),
+        .cpu_expansion_ram_we_n_o(expansion_ram_we_n),
+        .cpu_expansion_ram_ce_n_o(expansion_ram_ce_n),
+        .cpu_expansion_ram_d_i(expansion_ram_di),
+        .cpu_expansion_ram_d_o(expansion_ram_do),
+        .cpu_expansion_bank_o(expansion_bank),
 
         .cpu_upper_ram_a_o(upper_ram_a),
         .cpu_upper_ram_we_n_o(upper_ram_we_n),
@@ -645,6 +699,7 @@ cv_console
         .cart_a_o(cart_a),
         .cart_d_i(cart_d),
         .cart_rd(cart_rd),
+        .cart_ready_i(cart_ready),
 
                   .ext_rom_a_o(ext_rom_a),
                   .ext_rom_d_i(ext_rom_d),
@@ -799,6 +854,77 @@ video_mixer #(.LINE_LENGTH(290), .GAMMA(1)) video_mixer
         .VSync(vs_o),
         .HBlank(hblank),
         .VBlank(vblank)
+);
+
+//////////////// Spinner / roller controllers /////////////////
+//
+// The Super Action Controller's speed roller, the Roller Controller trackball
+// and the Expansion Module #2 steering wheel all signal on controller pins 7
+// and 9 (see rtl/cv_spinner.sv for the hardware and the references). A Roller
+// Controller is wired to both ports at once, X on controller 1 and Y on
+// controller 2, which is what the "Stick XY" setting reproduces.
+//
+// Off is the default: with no steps there are no strobes, so pins 7 and 9 idle
+// high and the Z80's maskable interrupt is never raised, exactly as before.
+
+wire [1:0] spin_mode = status[16:15];  // 0 off, 1 spinner, 2 stick X, 3 stick XY
+
+// MiSTer spinner device: [7:0] is a signed step count, [8] toggles per update.
+// Follow the joystick swap so the device and the pad stay on the same player.
+wire [8:0] spin_dev_a = status[3] ? spinner_1 : spinner_0;
+wire [8:0] spin_dev_b = status[3] ? spinner_0 : spinner_1;
+
+reg  [1:0] spin_tgl_a, spin_tgl_b;
+always @(posedge clk_sys) if (ce_10m7) begin
+        spin_tgl_a <= {spin_tgl_a[0], spin_dev_a[8]};
+        spin_tgl_b <= {spin_tgl_b[0], spin_dev_b[8]};
+end
+
+wire signed [7:0] spin_step_a = $signed(spin_dev_a[7:0]);
+wire signed [7:0] spin_step_b = $signed(spin_dev_b[7:0]);
+wire        [7:0] spin_mag_a  = spin_step_a[7] ? (~spin_step_a + 8'd1) : spin_step_a;
+wire        [7:0] spin_mag_b  = spin_step_b[7] ? (~spin_step_b + 8'd1) : spin_step_b;
+
+wire spin_dev_en = (spin_mode == 2'd1);
+wire spin_step_en_a = spin_dev_en & (spin_tgl_a[1] ^ spin_tgl_a[0]);
+wire spin_step_en_b = spin_dev_en & (spin_tgl_b[1] ^ spin_tgl_b[0]);
+
+// An analog stick as a roller. The deadzone keeps a resting stick from
+// strobing, which would interrupt the Z80 for no reason.
+wire signed [7:0] spin_stick_x = $signed(joya_l_analog[7:0]);
+wire signed [7:0] spin_stick_y = $signed(joya_l_analog[15:8]);
+
+wire signed [7:0] spin_rate_a =
+        ((spin_mode >= 2'd2) && ((spin_stick_x > 8'sd24) || (spin_stick_x < -8'sd24)))
+        ? spin_stick_x : 8'sd0;
+wire signed [7:0] spin_rate_b =
+        ((spin_mode == 2'd3) && ((spin_stick_y > 8'sd24) || (spin_stick_y < -8'sd24)))
+        ? spin_stick_y : 8'sd0;
+
+cv_spinner spinner_a
+(
+        .clk_i     (clk_sys),
+        .clk_en_i  (ce_10m7),
+        .reset_n_i (~reset),
+        .step_en_i (spin_step_en_a),
+        .step_dir_i(~spin_step_a[7]),
+        .step_cnt_i((spin_mag_a > 8'd31) ? 5'd31 : spin_mag_a[4:0]),
+        .rate_i    (spin_rate_a),
+        .p7_o      (ctrl_p7[0]),
+        .p9_o      (ctrl_p9[0])
+);
+
+cv_spinner spinner_b
+(
+        .clk_i     (clk_sys),
+        .clk_en_i  (ce_10m7),
+        .reset_n_i (~reset),
+        .step_en_i (spin_step_en_b),
+        .step_dir_i(~spin_step_b[7]),
+        .step_cnt_i((spin_mag_b > 8'd31) ? 5'd31 : spin_mag_b[4:0]),
+        .rate_i    (spin_rate_b),
+        .p7_o      (ctrl_p7[1]),
+        .p9_o      (ctrl_p9[1])
 );
 
 //////////////// Keypad emulation (by Alan Steremberg) ///////
