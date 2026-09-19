@@ -53,5 +53,7 @@ verilator/*.ddp
 verilator/*.zip
 verilator/imgui.ini
 .DS_Store
-verilator/obj_probe/
-verilator/Makefile.probe
+verilator/obj_probe*/
+verilator/obj_trace/
+verilator/Makefile.probe*
+verilator/Makefile.trace

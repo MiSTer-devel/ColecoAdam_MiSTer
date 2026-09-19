@@ -681,6 +681,14 @@ int last_frame = 0;
 static int addr_profile_every = 0;
 static long addr_profile_step = 0;
 static std::vector<unsigned long> addr_hist;
+// SIM_ADDR_PROFILE_FROM=N ignores everything before frame N, so one phase of a program can be
+// profiled on its own rather than averaged with its start-up.
+static int addr_profile_from = 0;
+// SIM_MEGA_TRACE=1 prints every MegaCart bank switch with the frame it happened on.
+static int mega_trace = 0;
+// SIM_VDP_TRACE=1 prints every VDP control register write: register 1 says whether the display is
+// on, register 5 where the sprite attribute table lives.
+static int vdp_trace = 0, vdp_wr_prev = 0;
 
 // SIM_SPR5_PROFILE=1 watches the VDP's fifth-sprite status: how often the sprite engine reports
 // a fifth sprite and with which number, and what the CPU would read back in the low 5 bits of the
@@ -689,6 +697,7 @@ static std::vector<unsigned long> addr_hist;
 static int spr5_profile = 0;
 static unsigned long spr5_events = 0;
 static std::vector<unsigned long> spr5_detect_hist;   // numbers the sprite engine reported
+static std::vector<int> spr5_line_min, spr5_line_max; // and the scanlines they were reported on
 static std::vector<unsigned long> spr5_latched_hist;  // numbers visible in the status register
 static unsigned long spr5_flag_steps = 0, spr5_steps = 0;
 // and the VDP's interrupt output, which the ColecoVision wires to the Z80's NMI: a program that
@@ -696,6 +705,12 @@ static unsigned long spr5_flag_steps = 0, spr5_steps = 0;
 static unsigned long vdp_int_falls = 0;
 static int vdp_int_last_frame = -1, vdp_int_prev = 1;
 // and the MegaCart bank, since a cartridge that stops paging has stopped loading
+// A CPU write to VRAM is held until the VDP can fit it into an access slot. If the program
+// writes again before that happens the earlier byte never reaches VRAM, exactly as on the real
+// chip - so a high collision count is a program outrunning the VDP, and shows up as tiles that
+// never change.
+static unsigned long vram_write_reqs = 0, vram_write_collisions = 0;
+static int vram_sched_prev = 0;
 static unsigned long mega_switches = 0;
 static int mega_last_frame = -1, mega_prev = -1;
 static std::vector<unsigned long> mega_hist;
@@ -703,19 +718,45 @@ static std::vector<unsigned long> mega_hist;
 void stepSim() {
         feedPS2();
         verilate();
-        if (addr_profile_every > 0 && ++addr_profile_step % addr_profile_every == 0) {
+        if (addr_profile_every > 0 && video.count_frame >= addr_profile_from
+            && ++addr_profile_step % addr_profile_every == 0) {
                 addr_hist[VERTOPINTERN->emu__DOT__console__DOT__adamnet__DOT__z80_addr]++;
         }
-        if (spr5_profile) {
+        if (spr5_profile && video.count_frame >= addr_profile_from) {
                 spr5_steps++;
                 if (VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__spr_5th_s) {
+                        int num = VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__spr_5th_num_s & 31;
                         spr5_events++;
-                        spr5_detect_hist[VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__spr_5th_num_s & 31]++;
+                        spr5_detect_hist[num]++;
+                        int line = (int16_t)(VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__hor_vert_b__DOT__cnt_vert_q << 7) >> 7;
+                        if (line < spr5_line_min[num]) spr5_line_min[num] = line;
+                        if (line > spr5_line_max[num]) spr5_line_max[num] = line;
                 }
                 if (VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__sprite_5th_q) {
                         spr5_flag_steps++;
                         spr5_latched_hist[VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__sprite_5th_num_q & 31]++;
                 }
+                if (vdp_trace) {
+                        int wr = VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__write_reg_s;
+                        if (wr && !vdp_wr_prev) {
+                                int reg = VERTOPINTERN->emu__DOT__console__DOT__d_from_cpu_s & 7;
+                                int val = VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__tmp_q;
+                                printf("vdp frame %d: R%d = %02X%s\n", video.count_frame, reg, val,
+                                       reg == 1 ? ((val & 0x40) ? "  (display on)" : "  (display OFF)") : "");
+                                fflush(stdout);
+                        }
+                        vdp_wr_prev = wr;
+                }
+
+                int sched = VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__wrvram_sched_q;
+                if (sched && !vram_sched_prev) {
+                        vram_write_reqs++;
+                        if (VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__wrvram_q) {
+                                vram_write_collisions++;
+                        }
+                }
+                vram_sched_prev = sched;
+
                 int vint = VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__int_n_q;
                 if (vdp_int_prev && !vint) { vdp_int_falls++; vdp_int_last_frame = video.count_frame; }
                 vdp_int_prev = vint;
@@ -724,6 +765,7 @@ void stepSim() {
                 if (page != mega_prev) {
                         mega_switches++;
                         mega_last_frame = video.count_frame;
+                        if (mega_trace) { printf("megacart frame %d: page %d\n", video.count_frame, page); fflush(stdout); }
                         mega_prev = page;
                 }
                 mega_hist[page]++;
@@ -890,9 +932,14 @@ int runHeadless() {
                 addr_profile_every = atoi(e);
                 addr_hist.assign(65536, 0);
         }
-        if (getenv("SIM_SPR5_PROFILE")) {
+        if (const char* e = getenv("SIM_ADDR_PROFILE_FROM")) { addr_profile_from = atoi(e); }
+        if (getenv("SIM_MEGA_TRACE")) { mega_trace = 1; }
+        if (getenv("SIM_VDP_TRACE")) { vdp_trace = 1; }
+        if (getenv("SIM_SPR5_PROFILE") || mega_trace || vdp_trace) {
                 spr5_profile = 1;
                 spr5_detect_hist.assign(32, 0);
+                spr5_line_min.assign(32, 9999);
+                spr5_line_max.assign(32, -9999);
                 mega_hist.assign(64, 0);
                 spr5_latched_hist.assign(32, 0);
         }
@@ -918,11 +965,18 @@ int runHeadless() {
         if (spr5_profile) {
                 printf("fifth sprite: %lu detections in %lu steps, flag set for %.2f%% of them\n",
                        spr5_events, spr5_steps, 100.0 * spr5_flag_steps / (spr5_steps ? spr5_steps : 1));
-                printf("  numbers reported by the sprite engine:");
-                for (int i = 0; i < 32; i++) { if (spr5_detect_hist[i]) { printf(" %d:%lu", i, spr5_detect_hist[i]); } }
+                printf("  numbers reported by the sprite engine, with the scanlines they came on:");
+                for (int i = 0; i < 32; i++) {
+                        if (spr5_detect_hist[i]) {
+                                printf(" %d:%lu@%d", i, spr5_detect_hist[i], spr5_line_min[i]);
+                                if (spr5_line_max[i] != spr5_line_min[i]) { printf("..%d", spr5_line_max[i]); }
+                        }
+                }
                 printf("\n  numbers visible in the status register:");
                 for (int i = 0; i < 32; i++) { if (spr5_latched_hist[i]) { printf(" %d:%lu", i, spr5_latched_hist[i]); } }
-                printf("\nvdp interrupt: %lu assertions, last at frame %d of %d\n",
+                printf("\nvram writes: %lu scheduled, %lu of them while the previous one was still pending\n",
+                       vram_write_reqs, vram_write_collisions);
+                printf("vdp interrupt: %lu assertions, last at frame %d of %d\n",
                        vdp_int_falls, vdp_int_last_frame, last_frame);
                 printf("megacart: %lu bank switches, last at frame %d; pages used:",
                        mega_switches, mega_last_frame);
