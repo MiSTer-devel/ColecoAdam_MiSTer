@@ -50,7 +50,10 @@ using namespace std;
 int initialReset = 48;
 bool run_enable = 1;
 bool adam_mode= 1;
-int exp_ram_mode = 0;   // memory expander for sim.v exp_ram: 0 = 64K, 1 = 256K (port 42h banks), 2 = none
+// Memory expander for sim.v exp_ram, in the OSD's order:
+// 0 = 64K, 1 = 256K, 2 = 512K, 3 = 1M, 4 = 2M, 5 = none. Banks past 64K are
+// selected by port 42h.
+int exp_ram_mode = 0;
 int spin_mode_opt = 0;  // sim.v spin_mode: 0 = off, 1 = spinner device (set by --spin)
 int batchSize = 150000;
 //int batchSize = 100;
@@ -599,21 +602,25 @@ std::vector<SpinSpec> spins;
 unsigned char spin_toggle[2] = { 0, 0 };
 
 // --peek [v:]ADDR[:LEN]@FRAME prints bytes of memory when FRAME is reached. Without a prefix it
-// reads the console's RAM array, whose index is the Z80 address in Adam mode; console mode
-// mirrors its 1K, so Z80 7038h is index 6038h. With "v:" it reads the 16K of VRAM instead, which
-// is where the VDP tables live.
+// reads by Z80 address: below 8000h the console's lower RAM array, at 8000h and above the ADAM's
+// upper 32K, which is where EOS keeps its variables. Console mode mirrors its 1K, so Z80 7038h is
+// index 6038h, and has a cartridge rather than RAM above 8000h. With "v:" it reads the 16K of
+// VRAM instead, which is where the VDP tables live.
 struct PeekSpec { int addr; int len; int frame; bool vram; };
 std::vector<PeekSpec> peeks;
+
+static unsigned char peekByte(const PeekSpec& p, int i) {
+        int a = p.addr + i;
+        if (p.vram) { return VERTOPINTERN->emu__DOT__vram__DOT__mem[a & 0x3FFF]; }
+        if (a & 0x8000) { return VERTOPINTERN->emu__DOT__upper_ram__DOT__ram[a & 0x7FFF]; }
+        return VERTOPINTERN->emu__DOT__ram__DOT__ram[a & 0x7FFF];
+}
 
 void scriptedPeek(int frame) {
         for (const PeekSpec& p : peeks) {
                 if (p.frame != frame) { continue; }
                 printf("peek frame %d %s%04X:", frame, p.vram ? "vram " : "", p.addr);
-                for (int i = 0; i < p.len; i++) {
-                        printf(" %02X", p.vram
-                               ? VERTOPINTERN->emu__DOT__vram__DOT__mem[(p.addr + i) & 0x3FFF]
-                               : VERTOPINTERN->emu__DOT__ram__DOT__ram[(p.addr + i) & 0x7FFF]);
-                }
+                for (int i = 0; i < p.len; i++) { printf(" %02X", peekByte(p, i)); }
                 printf("\n");
                 fflush(stdout);
         }
@@ -797,7 +804,8 @@ void usage(const char* prog) {
                 "  --cart FILE            load a cartridge (.col/.rom/.bin)\n"
                 "  --console              ColecoVision console mode\n"
                 "  --adam                 Adam computer mode (default)\n"
-                "  --exp-ram 64|256|0     memory expander: 64K (default), 256K in port 42h banks, or none\n"
+                "  --exp-ram SIZE         memory expander: 64 (default), 256, 512, 1024, 2048 or none.\n"
+                "                         Past 64K the bank is chosen by port 42h; 64 has no bank register\n"
                 "  --headless             run without a window; requires --frames\n"
                 "  --frames N             exit after N video frames\n"
                 "  --shots F1,F2,...      save these frames as DIR/frame_NNNNN.ppm\n"
@@ -831,7 +839,15 @@ void parseArgs(int argc, char** argv) {
                 else if (arg == "--adam") { adam_mode = 1; }
                 else if (arg == "--exp-ram") {
                         std::string v = value();
-                        exp_ram_mode = v == "256" ? 1 : (v == "0" || v == "none") ? 2 : 0;
+                        // Same order as the OSD's Expansion RAM option, so a sim run and a
+                        // hardware setting mean the same card. Anything unrecognised is 64K,
+                        // which is what the core has always defaulted to.
+                        if (v == "256" || v == "256K") exp_ram_mode = 1;
+                        else if (v == "512" || v == "512K") exp_ram_mode = 2;
+                        else if (v == "1024" || v == "1M") exp_ram_mode = 3;
+                        else if (v == "2048" || v == "2M") exp_ram_mode = 4;
+                        else if (v == "0" || v == "none") exp_ram_mode = 5;
+                        else exp_ram_mode = 0;
                 }
                 else if (arg == "--headless") { headless = true; }
                 else if (arg == "--frames") { run_frames = atoi(value().c_str()); }

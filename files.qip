@@ -31,6 +31,8 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/cv_addr_dec.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cv_ctrl.sv
 #set_global_assignment -name VHDL_FILE rtl/cv_ctrl.vhd
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cv_spinner.sv
+# Shared with verilator/sim.v so the expander decodes the same way in both.
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/cv_expander.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cv_clock.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cv_por.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/cv_console.sv

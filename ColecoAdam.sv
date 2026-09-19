@@ -242,7 +242,9 @@ parameter CONF_STR = {
         "OFG,Spinner,Off,Spinner,Stick X,Stick XY;",
         "-;",
         "OC,Mode,Computer,Console;",
-        "O45,Expansion RAM,64K,256K,None;",
+        // A three bit field, so it had to move off bits 4 and 5. 64K stays first so that a
+        // zeroed status word still means the expander the core has always defaulted to.
+        "OHJ,Expansion RAM,64K,256K,512K,1M,2M,None;",
         "R0,Reset;",
         "J,Fire 1,Fire 2,*,#,0,1,2,3,4,5,6,7,8,9,Purple Tr,Blue Tr;",
         "V,v",`BUILD_DATE
@@ -487,44 +489,55 @@ wire lowerexpansion_ram_we_n;
 wire [7:0] lowerexpansion_ram_di;
 wire [7:0] lowerexpansion_ram_do;
 
-// Memory expander: port 7Fh bits 10 put expansion RAM in the lower or upper 32K window (ADAM
-// Technical Manual 2.2). A bank is one lower plus one upper 32K; expanders past 64K pick the bank
-// through port 42h (MESS adam.c). The OSD offers the plain 64K expander (bank 0 only; no
-// addressor), 256K (4 banks) or none.
+// Expansion RAM option, in cv_expander's order: 0=64K 1=256K 2=512K 3=1M 4=2M 5=none.
+wire [2:0] exp_ram_size = status[19:17];
+
 wire [14:0] expansion_ram_a;
 wire        expansion_ram_ce_n;
+wire        expansion_ram_rd_n;
 wire        expansion_ram_we_n;
 wire  [7:0] expansion_ram_di;
 wire  [7:0] expansion_ram_do;
 wire  [7:0] expansion_bank;
 
-wire        exp_ram_none  = status[5];
-// A 256K expander holds four 64K banks, and a bank number past the last one must not answer.
-// Software counts banks by writing one and reading it back until a bank stops answering, so
-// letting bank 4 alias back to bank 0 makes 256K look like more: PowerPAINT's memory sizer
-// (disk offset 1300h) counts up to four banks and then reports its maximum, which is why it
-// showed 512 on the 256K setting. The 64K expander has no bank register at all, so port 42h
-// does nothing there and every bank is the same 64K.
-wire        exp_bank_absent = status[4] & (expansion_bank > 8'd3);
-wire        exp_ram_off   = exp_ram_none | exp_bank_absent;
-wire  [1:0] exp_ram_bank  = status[4] ? expansion_bank[1:0] : 2'b00;
-wire        exp_ram_upper = ~expansion_ram_ce_n;
-wire        exp_ram_we    = exp_ram_upper ? ~expansion_ram_we_n
-                                          : ~(lowerexpansion_ram_we_n | lowerexpansion_ram_ce_n);
-wire  [7:0] exp_ram_q;
+// Memory expander. cv_expander turns the two 32K windows of port 7Fh and the port 42h bank
+// register into one flat address inside the card; see that file for how the real cards work.
+// The card lives in SDRAM rather than block RAM: a 512K card would need 410 M10K blocks and
+// the core has 87 free, and it frees the 204 blocks the old 256K array used.
+wire [20:0] exp_a;
+wire        exp_rd;
+wire        exp_we;
+wire  [7:0] exp_d;
+wire        exp_absent;
+wire  [7:0] exp_q;
+wire        exp_ready;
 
-spramv #(18) expansion_ram
+cv_expander expander
     (
-     .clock(clk_sys),
-     .address({exp_ram_bank, exp_ram_upper, exp_ram_upper ? expansion_ram_a : lowerexpansion_ram_a}),
-     .wren(ce_10m7 & exp_ram_we & ~exp_ram_off),
-     .data(exp_ram_upper ? expansion_ram_do : lowerexpansion_ram_do),
-     .q(exp_ram_q),
-     .cs(1'b1)
+     .size_i(exp_ram_size),
+     .bank_i(expansion_bank),
+     .lower_a_i(lowerexpansion_ram_a),
+     .lower_ce_n_i(lowerexpansion_ram_ce_n),
+     .lower_rd_n_i(lowerexpansion_ram_rd_n),
+     .lower_we_n_i(lowerexpansion_ram_we_n),
+     .lower_d_i(lowerexpansion_ram_do),
+     .upper_a_i(expansion_ram_a),
+     .upper_ce_n_i(expansion_ram_ce_n),
+     .upper_rd_n_i(expansion_ram_rd_n),
+     .upper_we_n_i(expansion_ram_we_n),
+     .upper_d_i(expansion_ram_do),
+     .a_o(exp_a),
+     .rd_o(exp_rd),
+     .we_o(exp_we),
+     .d_o(exp_d),
+     .absent_o(exp_absent)
      );
 
-assign lowerexpansion_ram_di = exp_ram_off ? 8'hFF : exp_ram_q;
-assign expansion_ram_di      = exp_ram_off ? 8'hFF : exp_ram_q;
+// A bank with no memory behind it reads as open bus, which is FFh here, and never reaches the
+// SDRAM at all - so it also never makes the CPU wait.
+assign lowerexpansion_ram_di = exp_absent ? 8'hFF : exp_q;
+assign expansion_ram_di      = exp_absent ? 8'hFF : exp_q;
+wire exp_wait_n = ~((exp_rd | exp_we) & ~exp_ready);
 
 wire [14:0] upper_ram_a;
 wire        upper_ram_we_n, upper_ram_ce_n;
@@ -560,21 +573,35 @@ reg [5:0] cart_pages = 6'b0;
 always @(posedge clk_sys) if(ioctl_wr) cart_pages <= ioctl_addr[19:14];
 
 
+// Half a cycle of skew, which the controller's read timing depends on: see sdram.sv.
 assign SDRAM_CLK = ~clk_sys;
+
+// SDRAM map. The two channels must not overlap, because a write on one does not
+// invalidate the other's cached word.
+//   000000-0FFFFF  cartridge, 1MB, the most a MegaCart carries
+//   200000-3FFFFF  memory expander, up to 2MB
 sdram sdram
 (
    .*,
    .init(~pll_locked),
    .clk(clk_sys),
 
-   .wtbt(0),
-   .addr(ioctl_download ? ioctl_addr : cart_a),
-   .rd(cart_rd),
-   .dout(cart_d),
-   .din(ioctl_dout),
-   .we(ioctl_wr),
+   // ch0: the cartridge, and the ioctl download that fills it.
+   .ch0_addr(ioctl_download ? ioctl_addr : {5'd0, cart_a}),
+   .ch0_rd(cart_rd & ~ioctl_download),
+   .ch0_wr(ioctl_wr),
+   .ch0_din(ioctl_dout),
+   .ch0_dout(cart_d),
    // Was unconnected, so nothing waited for a read to complete; see cv_console's cart_wait_n.
-   .ready(cart_ready)
+   .ch0_ready(cart_ready),
+
+   // ch1: the memory expander.
+   .ch1_addr({4'd2, exp_a}),
+   .ch1_rd(exp_rd),
+   .ch1_wr(exp_we),
+   .ch1_din(exp_d),
+   .ch1_dout(exp_q),
+   .ch1_ready(exp_ready)
 );
 
 
@@ -666,11 +693,13 @@ cv_console
 
         .cpu_lowerexpansion_ram_a_o(lowerexpansion_ram_a),
         .cpu_lowerexpansion_ram_we_n_o(lowerexpansion_ram_we_n),
+        .cpu_lowerexpansion_ram_rd_n_o(lowerexpansion_ram_rd_n),
         .cpu_lowerexpansion_ram_ce_n_o(lowerexpansion_ram_ce_n),
         .cpu_lowerexpansion_ram_d_i(lowerexpansion_ram_di),
         .cpu_lowerexpansion_ram_d_o(lowerexpansion_ram_do),
         .cpu_expansion_ram_a_o(expansion_ram_a),
         .cpu_expansion_ram_we_n_o(expansion_ram_we_n),
+        .cpu_expansion_ram_rd_n_o(expansion_ram_rd_n),
         .cpu_expansion_ram_ce_n_o(expansion_ram_ce_n),
         .cpu_expansion_ram_d_i(expansion_ram_di),
         .cpu_expansion_ram_d_o(expansion_ram_do),
@@ -700,6 +729,7 @@ cv_console
         .cart_d_i(cart_d),
         .cart_rd(cart_rd),
         .cart_ready_i(cart_ready),
+        .exp_wait_n_i(exp_wait_n),
 
                   .ext_rom_a_o(ext_rom_a),
                   .ext_rom_d_i(ext_rom_d),

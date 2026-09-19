@@ -17,7 +17,9 @@ module emu
    input                 soft_reset,
    input                 menu,
    input                 adam,
-   input [1:0]           exp_ram,     // memory expander: 0 = 64K, 1 = 256K (port 42h banks), 2 = none
+   // Memory expander, same order as the OSD's Expansion RAM option:
+   // 0 = 64K, 1 = 256K, 2 = 512K, 3 = 1M, 4 = 2M, 5 = none.
+   input [2:0]           exp_ram,
 
    input [31:0]          joystick_0,
    input [31:0]          joystick_1,
@@ -256,34 +258,60 @@ spramv #(14) vram
    wire lowerexpansion_ram_we_n;
    wire [7:0] lowerexpansion_ram_di;
    wire [7:0] lowerexpansion_ram_do;
-  // Memory expander, as in ColecoAdam.sv; exp_ram replaces the OSD bits: 0 = 64K, 1 = 256K, 2 = none
   wire [14:0] expansion_ram_a;
   wire        expansion_ram_ce_n;
+  wire        expansion_ram_rd_n;
   wire        expansion_ram_we_n;
   wire  [7:0] expansion_ram_di;
   wire  [7:0] expansion_ram_do;
   wire  [7:0] expansion_bank;
 
-  wire        exp_ram_none  = exp_ram[1];
-  // A bank past the last one fitted must not answer; see ColecoAdam.sv for why.
-  wire        exp_bank_absent = exp_ram[0] & (expansion_bank > 8'd3);
-  wire        exp_ram_off   = exp_ram_none | exp_bank_absent;
-  wire  [1:0] exp_ram_bank  = exp_ram[0] ? expansion_bank[1:0] : 2'b00;
-  wire        exp_ram_upper = ~expansion_ram_ce_n;
-  wire        exp_ram_we    = exp_ram_upper ? ~expansion_ram_we_n
-                                            : ~(lowerexpansion_ram_we_n | lowerexpansion_ram_ce_n);
-  wire  [7:0] exp_ram_q;
-  spramv #(18) expansion_ram
+  // Memory expander. The decode is cv_expander, shared with ColecoAdam.sv so the
+  // two cannot drift; only the memory behind it differs. Hardware puts the card in
+  // SDRAM because 2MB is far more than the Cyclone V's M10K; here it is a plain
+  // array, which costs nothing in a C++ model and answers in the same cycle, so
+  // exp_ready below is always high.
+  wire [20:0] exp_a;
+  wire        exp_rd;
+  wire        exp_we;
+  wire  [7:0] exp_d;
+  wire        exp_absent;
+  wire  [7:0] exp_q;
+
+  cv_expander expander
+    (
+     .size_i(exp_ram),
+     .bank_i(expansion_bank),
+     .lower_a_i(lowerexpansion_ram_a),
+     .lower_ce_n_i(lowerexpansion_ram_ce_n),
+     .lower_rd_n_i(lowerexpansion_ram_rd_n),
+     .lower_we_n_i(lowerexpansion_ram_we_n),
+     .lower_d_i(lowerexpansion_ram_do),
+     .upper_a_i(expansion_ram_a),
+     .upper_ce_n_i(expansion_ram_ce_n),
+     .upper_rd_n_i(expansion_ram_rd_n),
+     .upper_we_n_i(expansion_ram_we_n),
+     .upper_d_i(expansion_ram_do),
+     .a_o(exp_a),
+     .rd_o(exp_rd),
+     .we_o(exp_we),
+     .d_o(exp_d),
+     .absent_o(exp_absent)
+     );
+
+  spramv #(21) expansion_ram
     (
      .clock(clk_sys),
-     .address({exp_ram_bank, exp_ram_upper, exp_ram_upper ? expansion_ram_a : lowerexpansion_ram_a}),
-     .wren(ce_10m7 & exp_ram_we & ~exp_ram_off),
-     .data(exp_ram_upper ? expansion_ram_do : lowerexpansion_ram_do),
-     .q(exp_ram_q),
+     .address(exp_a),
+     .wren(ce_10m7 & exp_we),
+     .data(exp_d),
+     .q(exp_q),
      .cs(1'b1)
      );
-  assign lowerexpansion_ram_di = exp_ram_off ? 8'hFF : exp_ram_q;
-  assign expansion_ram_di      = exp_ram_off ? 8'hFF : exp_ram_q;
+
+  wire  [7:0] exp_ram_di = exp_absent ? 8'hFF : exp_q;
+  assign lowerexpansion_ram_di = exp_ram_di;
+  assign expansion_ram_di      = exp_ram_di;
 
 
 wire [14:0] upper_ram_a;
@@ -518,11 +546,13 @@ wire  [7:0] ext_rom_d=8'hff;
 
      .cpu_lowerexpansion_ram_a_o(lowerexpansion_ram_a),
      .cpu_lowerexpansion_ram_we_n_o(lowerexpansion_ram_we_n),
+     .cpu_lowerexpansion_ram_rd_n_o(lowerexpansion_ram_rd_n),
      .cpu_lowerexpansion_ram_ce_n_o(lowerexpansion_ram_ce_n),
      .cpu_lowerexpansion_ram_d_i(lowerexpansion_ram_di),
      .cpu_lowerexpansion_ram_d_o(lowerexpansion_ram_do),
      .cpu_expansion_ram_a_o(expansion_ram_a),
      .cpu_expansion_ram_we_n_o(expansion_ram_we_n),
+     .cpu_expansion_ram_rd_n_o(expansion_ram_rd_n),
      .cpu_expansion_ram_ce_n_o(expansion_ram_ce_n),
      .cpu_expansion_ram_d_i(expansion_ram_di),
      .cpu_expansion_ram_d_o(expansion_ram_do),
@@ -552,6 +582,7 @@ wire  [7:0] ext_rom_d=8'hff;
      .cart_d_i(cart_d),
      .cart_rd(cart_rd),
      .cart_ready_i(1'b1),   // the simulator keeps the cartridge in block RAM, always ready
+     .exp_wait_n_i(1'b1),   // and the expander too, so it never makes the CPU wait
 
      .ext_rom_a_o(ext_rom_a),
      .ext_rom_d_i(ext_rom_d),
