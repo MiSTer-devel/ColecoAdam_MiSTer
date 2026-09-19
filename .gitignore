@@ -57,3 +57,6 @@ verilator/obj_probe*/
 verilator/obj_trace/
 verilator/Makefile.probe*
 verilator/Makefile.trace
+
+# Local reference material: datasheets, schematics and manuals, not part of the core
+docs/
