@@ -278,9 +278,8 @@ published privately at https://claude.ai/code/artifact/7b51e7a0-f8a9-4861-95a8-b
 
 ### Nothing waited for the SDRAM when reading the cartridge (2026-09-18)
 
-- **Symptom:** Uridium and Gauntlet misbehave on hardware while playing correctly in simulation.
-  Uridium corrupts its screen when a game starts; Gauntlet's maze breaks up into displaced bands
-  when scrolling. The same Gauntlet breakup happens on the stock MiSTer ColecoVision core.
+- **Symptom:** Uridium corrupts its screen when a game starts. Gauntlet's maze was thought to be
+  the same fault, but is not - see below; this fix cured Uridium and left Gauntlet unchanged.
 - **Cause:** on hardware the cartridge is in SDRAM. `ColecoAdam.sv` left the controller's
   `.ready()` output unconnected, while `cart_rd` and `cart_a_o` are combinational from the
   address decode and `cart_d_i` is muxed straight onto the CPU data bus. `sdram.sv` answers a
@@ -296,6 +295,31 @@ published privately at https://claude.ai/code/artifact/7b51e7a0-f8a9-4861-95a8-b
 - **Check:** none possible in simulation - the simulator keeps the cartridge in block RAM and
   ties `cart_ready_i` high, and Frogger's frames are identical either side of the change. This
   one can only be judged on hardware.
+
+### Gauntlet's maze breaking up is the game, not the core (2026-09-19)
+
+- **Symptom:** wall runs step sideways by a tile while the maze scrolls, on this core and on the
+  stock MiSTer ColecoVision core. Reported on issue #12 in 2022 as "flashing blocks on the walls".
+- **Not the core.** `verilator/compare/tools/vdpref.py` re-renders the background from the
+  captured VDP tables and registers and compares it with the frame the core drew: the core draws
+  its VRAM exactly, and the only cells that differ are ones a CPU write crossed mid-picture.
+- **What the game does.** The VRAM write log (`[` and `]` in the simulator GUI, written to
+  `captures/writes.txt` as `frame scanline addr data`) shows Gauntlet splitting its screen update
+  over two frames and putting half of it inside the visible picture: rows 0-7 at scanlines
+  192-213, which is blanking and safe, then rows 8-15 at scanlines 85-117 a frame later, which is
+  mid-picture. Over 51 captured frames every frame drawn while those writes were happening is
+  displaced and every other frame is clean. It is not vblank overrun - the whole 4.3 ms was free
+  and the game wrote at scanline 85 anyway.
+- **Confirmed against real hardware.** "Gauntlet - Colecovision" by ed1475 (2019-02-01,
+  https://www.youtube.com/watch?v=olxiDo_rVLo), described as "Recorded using the real hardware"
+  with the Opcode SGM, shows the same stepped walls.
+- **Why an F18A looked like a fix.** It renders a scanline ahead into a line buffer, so a write
+  landing mid-line changes the next line instead of the current one and the tear is hidden. That
+  is masking rather than fixing, and it is less faithful than the real part - as is its
+  dual-ported VRAM, which drops the CPU access windows the TMS9918A actually has.
+- **Two older claims that were wrong:** the 2022 report's "this doesn't happen on a real system",
+  and the idea that the game follows the beam using the fifth-sprite number. It writes at a fixed
+  point in the frame instead.
 
 ## Still open
 

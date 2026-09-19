@@ -18,9 +18,10 @@ can sweep in the background.
   - [ ] Run `./finalize.sh work/carts_spin` if the labels are wanted for the record.
 - [x] **B. Uridium's freeze** - fixed, and confirmed on hardware. Two faults, the lost fifth
   sprite (`b6f6e63`) and the unwaited SDRAM read (`a88e4ff`).
-- [ ] **C. Gauntlet's maze** - it plays well but still breaks up when scrolling, with both fixes
-  in. Not ours alone: the stock ColecoVision core does the same. Next step is footage of the real
-  thing, not more simulation. Section 8.
+- [x] **C. Gauntlet's maze** - settled 2026-09-19: **not a core bug, the game tears itself.**
+  The footage that was wanted exists - "Gauntlet - Colecovision" by ed1475, uploaded 2019-02-01,
+  described as "Recorded using the real hardware" with the Opcode SGM - and it shows the same
+  breakup. See section 8 for the evidence trail.
 - [x] **D. The "black-screen" test cartridges** - they are not black. In Computer mode, where an
   ADAM diagnostic belongs, System Hardware Test reports "FAIL CONTROLLER PORT #1", "FAIL AUX.
   VIDEO" and "FAIL AUX. AUDIO", and ADAM Final Test 3.3 waits at a "STATION ID -" prompt for
@@ -430,6 +431,11 @@ the program read from, while a torn or half-updated screen points at timing.
 
 ## 6. Known bugs
 
+- [x] The simulator drove both controllers from one keyboard (`joystick_1 = joystick_0`), so a
+  two player game was unplayable. Fixed 2026-09-19: player 2 is on I/J/K/L plus F and G, and the
+  recording format grew a third column for its bits. Recordings written before the fix have two
+  columns and `--replay` drives both ports from them, so they still reproduce what they
+  captured - checked by replaying one and comparing frames byte for byte.
 - [ ] Cosmo Fighter II's star field is missing. Compare a CPU trace against ColEm up to the
   first star write.
 - [ ] Re-check README's known bugs, then update README (its "tape/disk write is not supported"
@@ -524,7 +530,8 @@ AdamNet and DCB fixes on this branch are the likely reason it works now.
   the menu appears, keypad 1 selects A.E., a skill key starts it, and the game plays. Driven from
   the keyboard with "Keypad on numpad" on, via `config/AdamT_BB.CFG` and
   `_AdamTests/B1 Broderbund disk.mgl`. #9 closed.
-- [ ] Tick Broderbund off #12, which stays open for Uridium and Gauntlet.
+- [ ] Tick Broderbund off #12. Uridium is fixed and Gauntlet is not a core bug, so the
+  issue can be closed once that is written up.
 
 ### #12 Uridium - still reproduces
 
@@ -604,18 +611,38 @@ rather than the memory map.
   - **the stock MiSTer ColecoVision core in SGM mode does the same**, which is no surprise since
     this core started from the ColecoVision parts. A shared bug in the vdp18 lineage rather than
     anything this branch did, so a fix belongs upstream too.
-  - [ ] Settle whether it is a bug at all: find footage of Gauntlet running on a real
-    ColecoVision with a Super Game Module and see whether the maze does the same thing there.
-    The game rewrites the whole name table to scroll, which no ColecoVision can do inside vblank,
-    so some tearing is expected; the question is whether this much is.
-  - [ ] The likely mechanism: the game cannot rewrite the name table inside vblank, so it uses the
-    fifth-sprite number to follow the beam and rewrite behind it. If our 5S flag is reported on a
-    different line than the real chip would, the game rewrites the wrong band. The fix below made
-    the missing numbers appear; the next question is whether they appear on the **right lines**.
-    Record the scanline at each detection and check it against the sprite Y positions in VRAM.
-  - [ ] Reproduce it in simulation first. Gauntlet's own demo reaches the same screens - the
-    status bar reads "PRESS FIRE" in the hardware screenshots too - so a long enough run gets to a
-    complicated maze without having to drive the game.
+  - [x] **Settled 2026-09-19: not a core bug. The game tears itself, and real hardware does it
+    too.** The footage question above is answered - "Gauntlet - Colecovision" by ed1475, uploaded
+    2019-02-01, whose description says "Recorded using the real hardware" with the Opcode SGM,
+    shows the same breakup: https://www.youtube.com/watch?v=olxiDo_rVLo
+
+    Reproduced in simulation and taken apart with the capture hotkeys and the VRAM write log
+    (`captures/writes.txt`, `frame scanline addr data`). Gauntlet splits its screen update
+    across two frames and puts half of it inside the visible picture:
+
+        frame N    rows 0-7  written at scanlines 192-213   (blanking, safe)
+        frame N+1  rows 8-15 written at scanlines  85-117   (mid-picture, tears)
+        frame N+2, N+3  nothing
+
+    Across 51 captured frames the correlation is exact: every frame whose picture was drawn while
+    those 256 writes were happening shows the wall displaced by one tile, and every frame without
+    them is clean. It is not a case of running out of vblank and spilling over the edge either -
+    the whole 4.3 ms blanking was free and the game wrote at scanline 85 anyway, a frame later.
+
+    `verilator/compare/tools/vdpref.py` re-renders the background from the captured tables and
+    confirms the core draws its VRAM exactly; the differing cells are only the ones a write
+    crossed. So the VDP is faithful and the tear is the program's.
+
+    **Why an F18A appeared to fix it.** The F18A renders a whole scanline ahead into a line
+    buffer (`f18a_tiles.vhd`, `prescan_start` at `raster_x = 1`), so a write landing mid-line
+    changes the *next* line rather than the one being drawn, and the tear is hidden. That is
+    masking, not fixing, and it is less faithful than the real chip - the same direction as its
+    dual-ported VRAM, which drops the access windows the real part has. rampa069's 2022 note on
+    this issue was reading a nicer picture as a more correct one.
+
+    Two claims in the older notes above are wrong and left only for the record: the 2022 report's
+    "does not happen on real hardware" (it does), and the idea that the game follows the beam
+    using the fifth-sprite number (it writes at a fixed point in the frame instead).
 - Tearing was also noticed on the monitor, separately from that. It is not the core: six screenshots
   taken while it was happening are all clean, and a MiSTer screenshot comes from the core's own
   framebuffer, so a tear the core produced would be in them. `/media/fat/MiSTer.ini` has
