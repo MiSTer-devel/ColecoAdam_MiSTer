@@ -704,12 +704,103 @@ Timing is not a problem: the NES controller is written for up to 128 MHz with it
 delays sized for 85 MHz, and our `clk_sys` is 42.666 MHz, so every constraint is
 met with room to spare.
 
-- [ ] Port `NES_MiSTer/rtl/sdram.sv`, cartridge on ch0 and expander on ch1, and
-  drive `refresh` from the video blanking the core already has.
-- [ ] Do it only once the card behaviour below is known. How many bits of port 42h
+- [x] Port `NES_MiSTer/rtl/sdram.sv`, cartridge on ch0 and expander on ch1.
+- [x] Do it only once the card behaviour below is known. How many bits of port 42h
   a real 512K or 1MB card latches, and whether both 32K windows follow the same
   bank, decides the address map - and guessing at exactly those semantics is what
   produced the PowerPAINT bug in the first place.
+
+### What was actually built, 2026-09-18
+
+Two channels rather than three - there is no third master - and `ready` per channel
+rather than `busy`, so the wait chain keeps the shape `cart_wait_n` already had.
+Two things were changed from the NES design on purpose:
+
+- **Refresh stayed internal.** Making it an input only helps if the core has a
+  quiet window to spend it in, and driving it from video blanking cannot work:
+  the part needs a refresh every 7.8 us and a scanline is 63.7 us, so blanking is
+  eight times too slow. Instead an overdue refresh outranks the channels and a
+  merely due one waits for a slot nobody wants. Now that `a88e4ff` makes the CPU
+  wait properly, a refresh landing on a read costs a wait state instead of
+  corrupting the read, which is what it used to do.
+- **A cached read never enters the state machine.** The NES version runs the full
+  seven clock slot even when the byte is already in the channel's latched word,
+  which would have put a wait state where the single port controller had none. The
+  fast path answers from the register with `ready` never dropping, so the cartridge
+  path costs exactly what it did before.
+
+Requests are also captured the moment a strobe rises rather than when the
+controller is free, because `ioctl_wr` is a single cycle pulse, and reads and
+writes queue separately so a Z80 writing a byte and reading it straight back
+cannot have the read answered from the write's address.
+
+SDRAM map: cartridge at 000000-0FFFFF, expander at 200000-3FFFFF. The two must not
+overlap - a write on one channel does not invalidate the other's cached word.
+
+### Verified by `verilator/sdram_tb/`
+
+The core's own simulator cannot check this: it clocks `clk_sys` at the 10.7 MHz
+rate with `ce_10m7` tied high, so a seven clock slot there would be two and a half
+Z80 clocks instead of the half clock it is on hardware, and every access would look
+like a stall. So the controller has its own testbench against a behavioural chip
+model. `cd verilator/sdram_tb && make`. It checks round trips on both channels
+across bank, row and column bits, that sequential bytes hit the cached word (32 of
+64 reads free), that the channels do not evict each other (32 of 64 free when
+interleaved), a read queued behind a write, and the refresh rate.
+
+Writing it caught the one thing worth catching: the exact cycle the chip's data is
+on the bus. The board drives `SDRAM_CLK` from `~clk_sys`, so the part clocks half a
+cycle ahead of the controller, and the read has to be sampled half a cycle *after*
+the CAS latency edge. The anchor for that is the single port controller this core
+shipped with, which samples three controller clocks after issuing READ and works on
+the hardware; the model is built to match it, and is commented to say so, because
+a model that released the bus half a period earlier would fail a correct controller.
+
+### Confirmed on the MiSTer, 2026-09-18
+
+Built with Quartus 17.0.2 and run on the DE10-Nano as
+`_Computer/ColecoAdam_20260918_expander.rbf`, md5 e89c476ef186dce68a64b70ac1e774c3.
+
+The bank walk cartridge (`hardware_tests/banktest/`, MGLs R7-R12) paints the screen
+with the number of banks it found. Every size is right, and every colour is the
+same value the simulator produced:
+
+| setting | hardware | |
+|---|---|---|
+| None | black | nothing answers |
+| 64K | black | no bank register, every bank aliased |
+| 256K | rgb(33,200,66) green | 4 banks |
+| 512K | rgb(84,85,237) blue | 8 banks |
+| 1M | rgb(252,85,84) red | 16 banks |
+| 2M | white | **32 banks, all distinct** |
+
+PowerPAINT (MGLs P1-P4) reads 64, 256 and 512 at the matching settings, so the
+sizer that started this whole thread now agrees with the hardware.
+
+Nothing regressed: Uridium - the cartridge whose corruption `a88e4ff` fixed - draws
+its title screen cleanly, and SmartWRITER, Frogger, Super Cobra and Donkey Kong Jr
+all boot. The 179 cartridge sweep is unchanged at 170 PASS, 2 DRIFT, 7 REVIEW with
+the same titles in each bucket.
+
+- [ ] Left untested on hardware: sustained expander traffic. The bank walk touches
+  two bytes per bank, which proves the addressing but not what happens when a
+  program hammers the expander channel while the cartridge channel is busy. T-DOS
+  or a RAM disk on a 512K card would be the thing to run.
+
+### What it cost, from the Quartus 17.0.2 fit
+
+| | before (20260918) | after |
+|---|---|---|
+| M10K blocks | 466 / 553 (84%) | **210 / 553 (38%)** |
+| block memory bits | 3,638,757 | 1,541,605 |
+| ALMs | 15,551 (37%) | 15,293 (36%) |
+| clk_sys setup slack | - | +3.586 ns of 23.432 |
+
+The 256 blocks the 256K expander used are back, and the core now has room for
+whatever wants block RAM next. The two channel controller costs slightly *fewer*
+ALMs than the single port one it replaced, which is the word cache and the boot
+sequence being simpler than the old controller's eight idle states. Timing passes
+with no failing paths at all - TNS is 0.000 on every clock.
 
 ## 3b. How the expanders bank, settled 2026-09-18
 
@@ -722,10 +813,34 @@ Bank 0 at power-up. A 64K card has no bank logic at all and needs no addressor.
 
 So an expander larger than 256K needs, on top of the SDRAM work in section 3a:
 
-- [ ] widen `exp_ram_bank` from 2 bits to 3 or 4, and widen the "bank past the last one fitted"
-  test that `2f68257` added;
-- [ ] extend the OSD list past 256K;
-- [ ] nothing else about the interface - port 42h and the data bus are already right.
+- [x] widen `exp_ram_bank` from 2 bits to 3 or 4, and widen the "bank past the last one fitted"
+  test that `2f68257` added. Done as `rtl/cv_expander.sv`, which now holds the whole decode -
+  windows, bank register, absent test - and is shared by `ColecoAdam.sv` and `verilator/sim.v`
+  so the two cannot drift. Five bits of bank, so 2MB.
+- [ ] extend the OSD list past 256K (the simulator's `--exp-ram` already takes
+  `64|256|512|1024|2048|none`; the OSD still has to move to a three bit field);
+- [x] nothing else about the interface - port 42h and the data bus are already right.
+
+### Proved in simulation, 2026-09-18
+
+`hardware_tests/banktest/` builds a cartridge that writes `bank^5A` at offset 0000 and
+`bank^A5` at offset 4000 of all 32 banks, reads them all back, and reports the run of good
+banks from bank 0. Results come out in VRAM at 3800h for the simulator and as the backdrop
+colour for a screen, so the same cartridge is the hardware check once the expander is in SDRAM.
+
+| setting | banks counted | read back | PowerPAINT shows |
+|---|---|---|---|
+| None | 0 | all FF | 64 |
+| 64K | 0 | every bank the last write, `45` | 64 |
+| 256K | 4 | 5A 5B 58 59 then FF | 256 |
+| 512K | 8 | through 5D then FF | 512 |
+| 1M | 16 | through 55 then FF | 512 |
+| 2M | 32 | all 32 distinct, to 45 | 512 |
+
+Both columns are right. The 64K card aliasing every bank to one 64K is what a card with no
+bank register does, and PowerPAINT stopping at 512 is its own sizer saturating: it counts to
+four banks past the base and then stores code 7, so it cannot tell 512K from 2MB. No period
+software we have counts higher, which is why the test cartridge exists.
 
 - [ ] Ask Eric Pearson (EXPAnDDR, MIB238, RAMTEST v2.0) or Michael Carter (Coleco-Cheap-Memory,
   Coleco-2MB-Memory) to confirm the original Orphanware and Micro Innovations cards latch the same
