@@ -710,3 +710,24 @@ met with room to spare.
   a real 512K or 1MB card latches, and whether both 32K windows follow the same
   bank, decides the address map - and guessing at exactly those semantics is what
   produced the PowerPAINT bug in the first place.
+
+## 3b. How the expanders bank, settled 2026-09-18
+
+The bank number is written to port 42h as **data**, and the memory card latches it. See
+`docs/memory_expanders/README.md` for the evidence, which comes from three open hardware designs
+and two manufacturers' manuals. In short: the addressor in the centre slot decodes the write and
+pulses one wire; the memory card latches D0-D7 on that edge and drives its upper address lines,
+so the register is as wide as the card - 2 bits for 256K, 3 for 512K, 4 for 1MB, 5 for 2MB.
+Bank 0 at power-up. A 64K card has no bank logic at all and needs no addressor.
+
+So an expander larger than 256K needs, on top of the SDRAM work in section 3a:
+
+- [ ] widen `exp_ram_bank` from 2 bits to 3 or 4, and widen the "bank past the last one fitted"
+  test that `2f68257` added;
+- [ ] extend the OSD list past 256K;
+- [ ] nothing else about the interface - port 42h and the data bus are already right.
+
+- [ ] Ask Eric Pearson (EXPAnDDR, MIB238, RAMTEST v2.0) or Michael Carter (Coleco-Cheap-Memory,
+  Coleco-2MB-Memory) to confirm the original Orphanware and Micro Innovations cards latch the same
+  way. Both are active on GitHub. Their designs are built to work with the original addressors and
+  software, so the interface has to match, but the original boards' own decoding is still inferred.
