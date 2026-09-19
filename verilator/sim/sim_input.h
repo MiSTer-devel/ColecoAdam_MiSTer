@@ -29,8 +29,10 @@ struct SimInput {
 public:
 
 	int inputCount = 0;
-	bool inputs[16];
-	int mappings[16];
+	// Player 1 needs 20 joystick bits - four directions, two fire buttons and the twelve keypad
+	// keys - then the system menu, three capture hotkeys, and player 2's six.
+	bool inputs[32];
+	int mappings[32];
 
 	SData* ps2_key = NULL;
 	std::queue<SimInput_PS2KeyEvent> keyEvents;
