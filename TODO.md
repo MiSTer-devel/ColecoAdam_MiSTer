@@ -29,8 +29,9 @@ can sweep in the background.
 - [ ] **E. Triage the sweep titles never looked at** (section 5): Pitfall II, Zenji and
   Squish 'Em Sam differ; Adventure Pack 1-3, Evolution, Journey to Maraud Mountain and
   Tournament Tennis are close.
-- [ ] **F. Cosmo Fighter II's star field** (section 6). The oldest open bug and the most work:
-  a CPU trace against ColEm up to the first star write.
+- [x] **F. Cosmo Fighter II's star field** (section 6). Fixed 2026-09-21, and it was never in the
+  VDP: `TV80_REFRESH` was undefined in both builds, so the Z80 had no R register and `LD A,R`
+  returned a constant 0. The game seeds its stars from R. No `.rbf` carries the fix yet.
 
 Needs hardware, not this machine: the rest of section 1, the spinner checklist in 6a (which also
 needs a new Quartus build, since no `.rbf` on the MiSTer contains `cv_spinner.sv`), and the
@@ -63,7 +64,10 @@ a keyboard.
   - [ ] Run the checkout through, and check that OSD Reset returns to SmartWRITER.
 - [ ] RAM test cartridges at 64K, 256K and None: check the colours on the monitor. MiSTer
   screenshots of them were stale.
-- [ ] Buck Rogers high score save, played to the end on hardware.
+- [x] Buck Rogers high score save on hardware, reported by a tester 2026-09-21: **the DSK
+  version works**, and writing from SmartWRITER works with a 1.44MB DSK. That covers the disk
+  path end to end on real hardware, including a disk image far larger than the 160K standard.
+  The **DDP (tape)** version is still unconfirmed - see section 2, which is the tape path.
 - [ ] Commit in pieces once hardware looks right:
   - [ ] the simulator
   - [ ] the comparison framework
@@ -104,7 +108,9 @@ came before that fix.
 - [ ] Reproduce in the simulator with `SoftwareFromMiSTer/E.O.S/Games/Buck Rogers - Planet of
   Zoom Super Game (1983) (Coleco).ddp` (on a copy). Script `--press` input to reach game over
   and the initials entry, then check that the image changed and the game carries on.
-- [ ] Do the same with the `.dsk` version, to separate tape from disk.
+- [x] Do the same with the `.dsk` version, to separate tape from disk. Done on hardware by a
+  tester 2026-09-21: Super Buck on DSK works, and SmartWRITER writes to a 1.44MB DSK. So the
+  fault, if any remains, is in the tape path rather than shared write code.
 - [ ] Run the ADAM Tape-Disk Verification Rev. 1 cartridge (`adam_carts/`) against a blank DDP
   from `Blank Media/`.
 - [ ] Re-run the July write tests: `_wrtest/cpmtest.dsk` against `_wrtest/golden.dsk`, and
@@ -114,8 +120,12 @@ came before that fix.
 
 ## 3. Expansion RAM
 
-- [ ] **Bug: the upper half of the 64K Memory Expander is missing.** Port 7Fh upper bits `10`
-  select 32K Expansion RAM (ADAM Technical Manual 2.2).
+- [x] **Bug: the upper half of the 64K Memory Expander is missing.** Fixed; see the next item.
+  Re-verified 2026-09-21 at every size with `hardware_tests/banktest/uppertest.col`, which walks
+  all 32 banks through the upper window (7Fh = 0Bh, worker relocated to RAM at 7000h because the
+  expander covers where the cartridge lives). Counts match the lower window exactly: none and 64K
+  give 0, then 4, 8, 16, 32. Port 7Fh upper bits `10` select 32K Expansion RAM (ADAM Technical
+  Manual 2.2).
   - `cv_addr_dec.sv` decodes it (`expansion_ram_ce_n_o`), but nothing answers:
     `cv_console.sv`'s bus mux ignores it, and `ColecoAdam.sv`/`sim.v` have no RAM behind it, so
     it reads FFh. The lower half (`lowerexpansion_ram`) exists.
@@ -133,7 +143,9 @@ came before that fix.
   lower window), which is its bank probe, and carries on normally.
 - [ ] Test the 64K expander:
   - [ ] 64K Expansion RAM Test cartridge (`colrom/`)
-  - [ ] RAMTEST v2.0 (Eric Pearson) and RAMTest Rel 2.0 (Orphanware)
+  - [x] RAMTEST v2.0 (Eric Pearson): run on a DE10-Nano 2026-09-21, reports "32 Banks Detected"
+    at the 2M setting and walks them. RAMTest Rel 2.0 (Orphanware) turns out to be an address
+    range tester rather than a sizer, so it says nothing about the expander.
   - [ ] CP/M or T-DOS reporting the extra memory
 - [x] **AdamNet ignores the memory map.** Fixed 2026-09-13: `cv_console.sv` now passes the
   AdamNet strobes only when intrinsic RAM is selected (`ram_ce_n_s` or `upper_ram_ce_n_s`).
@@ -166,8 +178,7 @@ came before that fix.
     - T-DOS boots with 256K.
   - Hardware: the RAM adds about 1.5 Mbit of BRAM, still to check on the MiSTer.
   - 512K/1MB remain open (SDRAM, below).
-- [ ] The original item, for the remaining sizes: add an OSD option, Expansion RAM: None / 64K / 256K / 512K / 1MB. Keep "None" for
-  software that behaves differently with an expander fitted.
+- [x] The original item, done 2026-09-18: the OSD offers 64K / 256K / 512K / 1M / 2M / None.
 - [ ] **Beyond 64K** (MicroFox 256K/512K/1MB cards, Lundy 1MB board; both need an addressor
   signal). MESS's adam.c documents port 42h: "42-42 (W) = Expansion RAM page selection, only
   useful if expansion greater than 64k". Still unknown:
@@ -198,22 +209,29 @@ came before that fix.
       - They also contain a RAM-disk routine that walks banks with `OUT (42h),A`.
       - So booting any T-DOS disk exercises memory beyond 64K, and 42h is the RAM bank port
         there.
-- [ ] **Put large expansion RAM in SDRAM.** 1MB does not fit in BRAM: the Cyclone V has about
+- [x] **Put large expansion RAM in SDRAM.** Done 2026-09-18, commit `337ebcd`; see section 3a
+  for the controller and 3b for the card behaviour. The fit went from 466 of 553 M10K blocks to
+  210. 1MB did not fit in BRAM: the Cyclone V has about
   5.5 Mbit (~700 KB) of M10K in total, shared with the MiSTer framework, and the core's RAMs and
   ROMs already take about 1.4 Mbit.
   - The core already requires SDRAM and uses it for cartridge ROM (the first 1 MB).
   - Map the expansion at an offset such as 100000h and share `sdram.sv`'s single request port;
     the Z80 only makes one access at a time.
   - Give `sim.v` the same memory.
-- [ ] **Power Paint** shows a memory readout on its second splash screen - reportedly up to 512K,
-  though perhaps not the whole range. A good way to see what a real program thinks the expander
-  holds, so run it at each Expansion RAM setting and read that number off the screen.
+- [x] **Power Paint**'s memory readout, checked 2026-09-18 in simulation and on hardware: it
+  reads 64, 256 and 512 at the matching settings, and 512 at 1M and 2M as well. That ceiling is
+  its own - its sizer counts to four banks past the base and then stores a saturated code - not
+  the core's.
 - [ ] Test beyond-64K software:
   - [ ] T-DOS and CP/M 2.2 RAM disks
   - [ ] EOS RAM disks (ADAM's Desktop, SmartDSK, MegaDisk)
   - [ ] RAM Test v1.3 & Utilities (AJM, CP/M)
-  - [ ] RAMTEST v2.0
-  - [ ] RAM-disk contents surviving a reset, as they do on hardware
+  - [x] RAMTEST v2.0 - 32 banks on hardware, above
+  - [x] RAM-disk contents surviving a reset, as they do on hardware. They do, and it bites:
+    RAMTEST leaves its 2680h marker at offset 0086h of every bank, a core reset does not clear
+    SDRAM, so a second run reads its own marker back, reads it as an alias and reports 0 banks.
+    Faithful - a warm reset does not clear DRAM on a real ADAM either - but worth knowing before
+    reading a 0 as a fault.
 - [ ] Accept the introduction to John Lundy (Lundy Electronics). Questions for him:
   - [ ] Port 42h layout and reset state.
   - [ ] Addressor behaviour.
@@ -436,16 +454,26 @@ the program read from, while a torn or half-updated screen points at timing.
   recording format grew a third column for its bits. Recordings written before the fix have two
   columns and `--replay` drives both ports from them, so they still reproduce what they
   captured - checked by replaying one and comparing frames byte for byte.
-- [ ] Cosmo Fighter II's star field is missing. Compare a CPU trace against ColEm up to the
-  first star write.
-- [ ] Re-check README's known bugs, then update README (its "tape/disk write is not supported"
-  line is out of date for floppies):
+- [x] Cosmo Fighter II's star field is missing. Fixed 2026-09-21: `TV80_REFRESH` was never
+  defined, so `LD A,R` read back a constant 0. See `STATUS.md`.
+- [x] Re-check README's known bugs and update it. Done 2026-09-21: the typing bug and the
+  "tape/disk write is not supported" line are gone (disk writes confirmed on hardware by a
+  tester, tape implemented but not yet confirmed), and the README gained an **Expansion RAM**
+  section. That section exists to stop the same two questions coming back as issues: PowerPAINT
+  reporting 512 for any card 512K or larger, which is its own sizer saturating, and RAMTEST
+  reporting "0 Banks Detected" on a second run, which is it reading back the 2680h marker it
+  stamped at offset 0086h of every bank - a reset does not clear the expander, exactly as a warm
+  reset does not clear DRAM on a real ADAM. Reload the core to run it again.
   - [x] a bad character the first time something is typed: fixed in commit 1029386 (July
     2026) and checked on a DE10-Nano. EOS used to read the key after the PS/2 value had moved
     on to the release event (^@), and a blocked keyboard read swallowed keystrokes.
   - [ ] reset not quite like an ADAM
   - [ ] no printer
   - [ ] key repeat
+  - [x] Cosmo Fighter II's star field was listed there as a known bug. Moved to the "fixed since
+    this list was written" paragraph on 2026-09-21, naming the cause. Note the README now runs
+    ahead of the releases: the fix is in the tree and no published `.rbf` has it yet, so the next
+    build needs to go out reasonably promptly.
 
 ## 6a. Spinner and roller controllers
 
@@ -809,10 +837,17 @@ its title screen cleanly, and SmartWRITER, Frogger, Super Cobra and Donkey Kong 
 all boot. The 179 cartridge sweep is unchanged at 170 PASS, 2 DRIFT, 7 REVIEW with
 the same titles in each bucket.
 
-- [ ] Left untested on hardware: sustained expander traffic. The bank walk touches
-  two bytes per bank, which proves the addressing but not what happens when a
-  program hammers the expander channel while the cartridge channel is busy. T-DOS
-  or a RAM disk on a 512K card would be the thing to run.
+- [x] Sustained expander traffic, checked 2026-09-21: **RAMTEST v2.0 (2018) by Eric Pearson**,
+  who designed the EXPAnDDR expander, reports "32 Banks Detected" with the 2M setting on a
+  DE10-Nano and walks them. Independent confirmation of the full 2MB from software written
+  for real expander hardware, and it works the channel far harder than the bank walk does.
+- [ ] RAMTEST v2.0 does not run in the simulator. The disk boots, the program takes the VDP
+  (R0=00 then R1=E0 at frame 16) and writes no further register for 7,000 frames, leaving a
+  black screen with VRAM all zeros. Same at every expander size including None, so it is not
+  the expander. A disk boot that does work, PowerPAINT, sets R0 at frame 16 then R1, R2, R3,
+  R4 and R7 at frame 18. The same disk runs on hardware, so this is a simulator problem -
+  likely AdamNet or disk timing - and worth finding, because it costs us a test the hardware
+  can run and the simulator cannot.
 
 ### What it cost, from the Quartus 17.0.2 fit
 

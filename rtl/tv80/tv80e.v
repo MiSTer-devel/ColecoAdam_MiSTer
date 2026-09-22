@@ -23,6 +23,12 @@
 // TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE 
 // SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+// Repeated from tv80_core.v, which explains it, because neither Quartus nor Verilator
+// promises an order for the two files and a macro only reaches the file compiled after it.
+`ifndef TV80_REFRESH
+ `define TV80_REFRESH 1
+`endif
+
 module tv80e (/*AUTOARG*/
   // Outputs
   m1_n, mreq_n, iorq_n, rd_n, wr_n, rfsh_n, halt_n, busak_n, A, dout, 
