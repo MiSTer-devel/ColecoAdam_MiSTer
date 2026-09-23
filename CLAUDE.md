@@ -3,8 +3,9 @@
 MiSTer FPGA core for the Coleco ADAM computer and the ColecoVision console: a SystemVerilog
 conversion of Arnim Laeuger's ColecoVision core with AdamNet (keyboard, disks, tapes) adapted
 from ColEm. `STATUS.md` records where the testing and bug fixing currently stand, and `TODO.md`
-is the work list. `HANDOFF.md` is the hardware test plan for branch `adam-accuracy-fixes`: what
-each fix changes, the checks to run on a MiSTer, and how to back a single fix out.
+is the work list. `HANDOFF.md` is the hardware test plan for whatever branch is currently awaiting
+testing on a MiSTer - what each change does, the checks to run, and how to back one out; it names
+the branch and the `.rbf` at the top, and `hardware_tests/` is the kit it refers to.
 `docs/`, `ColEm56-Source/`, the software library and ROM collection stay local and are not in
 git.
 
@@ -22,7 +23,7 @@ git.
 | `rtl/cv_adamnet.sv` | AdamNet devices and the PS/2 to ADAM key tables |
 | `rtl/track_loader_adam.sv` | Moves disk/tape blocks between AdamNet and the SD image |
 | `rtl/vdp18v/` | TMS9918A (SystemVerilog). `rtl/vdp18/` is the older VHDL |
-| `rtl/tv80/` | Z80 used by both hardware and simulation. `rtl/T80/` is unused |
+| `rtl/tv80/` | Z80 used by both hardware and simulation. `rtl/T80/` is unused. `TV80_REFRESH` is its only `ifdef` and is `define`d in `tv80_core.v` and `tv80e.v` themselves, not in the `.qsf` or the simulator Makefile: it went undefined in both build systems for years, which left the R register non-existent and `LD A,R` returning 0. Don't move it back into a build file |
 | `rtl/{bios,writer,eos}.hex` | OS-7 BIOS, SmartWriter, EOS. `verilator/rtl/` has identical copies for the simulator |
 | `verilator/` | Verilator simulator (see below) |
 | `verilator/compare/` | Core vs ColEm comparison framework; read its `README.md` |
@@ -145,6 +146,13 @@ RTL. The same applies to ColEm patches. `setup.sh` makes two, each backed by doc
 - Text mode drawn at +6 px instead of +8, per the datasheet.
 - One extra T-state per M1 cycle, the game board's WAIT flip-flop (`COLEM_M1_WAIT=0` turns it
   off). With it the core and ColEm stay frame-exact.
+
+Reading a sweep: check `core_exit` in each `result.txt` before believing a verdict. Anything other
+than 0 is a **run** failure, not a result - the row should be discarded and re-run, not
+investigated. Sweeps launched as background jobs lose their in-flight `Vemu` children when the
+job's process group is torn down, which shows up as a handful of alphabetically adjacent FAILs that
+had scored `match=1.0000` on every shot they reached before dying. `finalize.sh` is also what
+reclassifies DRIFT, so a sweep summary without it shows timing-drift titles as REVIEW.
 
 ## Hardware references
 

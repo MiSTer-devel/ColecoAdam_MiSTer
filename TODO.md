@@ -33,9 +33,10 @@ can sweep in the background.
   VDP: `TV80_REFRESH` was undefined in both builds, so the Z80 had no R register and `LD A,R`
   returned a constant 0. The game seeds its stars from R. No `.rbf` carries the fix yet.
 
-Needs hardware, not this machine: the rest of section 1, the spinner checklist in 6a (which also
-needs a new Quartus build, since no `.rbf` on the MiSTer contains `cv_spinner.sv`), and the
-multicart reset check in section 8.
+Needs hardware, not this machine: the rest of section 1, the spinner checklist in 6a, and the
+multicart reset check in section 8. None of them needs a new build any more - `cv_spinner.sv` has
+shipped since `releases/ColecoAdam_20260918.rbf`, and `docs/builds/ColecoAdam_20260922_refresh.rbf`
+carries the expander and the R register on top of it. `HANDOFF.md` is the checklist.
 
 ## 1. Try the September fixes on a MiSTer
 

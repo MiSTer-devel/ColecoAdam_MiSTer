@@ -41,8 +41,12 @@ the fixes:
 
 | Suite | Before | After |
 |---|---|---|
-| 179 cartridges, Console mode, 1300 frames with scripted input | 164 PASS, 3 DRIFT, 12 REVIEW | 170 PASS, 2 DRIFT, 7 REVIEW |
+| 179 cartridges, Console mode, 1300 frames with scripted input | 164 PASS, 3 DRIFT, 12 REVIEW | 171 PASS, 2 DRIFT, 6 REVIEW |
 | 12 ADAM scenarios (SmartWRITER typing and keys, 9 disks, 1 tape) | 10 MATCH, 1 CLOSE, 1 DIFFERS | 12 MATCH |
+
+"After" is the current tree, so it includes work from after the accuracy fixes: the cartridge run
+was 170 PASS, 2 DRIFT, 7 REVIEW when those landed, and Cosmo Fighter II became the 171st PASS with
+the R register fix on 2026-09-21. The DRIFT pair only shows as DRIFT once `finalize.sh` has run.
 
 - **Now passing:**
   - Cartridges: Super Cobra, Crown Jewels I-III, Power Lords, Aquattack, Kevtris, Slither.
