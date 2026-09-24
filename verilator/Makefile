@@ -62,6 +62,7 @@ V_SRC = \
 	../rtl/cv_clock.sv \
 	../rtl/cv_ctrl.sv \
 	../rtl/cv_spinner.sv \
+	../rtl/cv_expander.sv \
 	../rtl/sdram.sv \
 	../rtl/cv_addr_dec.sv \
 	../rtl/cv_console.sv \

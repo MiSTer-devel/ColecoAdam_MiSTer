@@ -1,262 +1,394 @@
 //
-// sdram.v
+// sdram.sv
 //
-// Static RAM controller implementation using SDRAM MT48LC16M16A2
+// Two channel, byte wide SDRAM controller for the MT48LC16M16 on a MiSTer.
 //
 // Copyright (c) 2015-2019 Sorgelig
-//
-// Some parts of SDRAM code used from project:
-// http://hamsterworks.co.nz/mediawiki/index.php/Simple_SDRAM_Controller
+// Arbitration and the per channel word cache follow NES_MiSTer's three channel
+// version of this controller; the bus timing is unchanged from both.
 //
 // This source file is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published
 // by the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version. 
+// (at your option) any later version.
 //
 // This source file is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of 
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the 
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 //
-// You should have received a copy of the GNU General Public License 
+// You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 //
-// ------------------------------------------
+//-----------------------------------------------------------------------------
 //
-// v2.1 - Add universal 8/16 bit mode.
-// v2.2 - Support for SDRAM v2
+// Why two channels
 //
+// The single port version of this controller served the cartridge alone. The
+// ADAM memory expander cannot go in block RAM - a 512K card needs 410 M10K
+// blocks and the core has 87 free - so it has to share the SDRAM, and a second
+// master needs arbitration the single port version has none of.
+//
+// The two channels are:
+//
+//   ch0  the cartridge: Z80 reads, and the ioctl writes that load it
+//   ch1  the ADAM memory expander
+//
+// ch0 has priority. The Z80 only ever accesses one of them at a time, so the
+// two rarely collide; what the separate channels really buy is a cache each,
+// which is the next paragraph.
+//
+// The word cache, and why the CPU usually does not wait
+//
+// The chip is 16 bits wide and the Z80 reads bytes, so half of all sequential
+// reads want the byte next to one already fetched. Each channel keeps the last
+// word it read, and a read that hits it is answered from the register with no
+// bus cycle at all and without `ready` ever dropping - so the CPU is not
+// stalled, exactly as in the single port version. That fast path is why moving
+// the expander in here does not slow the cartridge down: a run through cartridge
+// code still costs a bus cycle only every other byte, and the expander has its
+// own cache so the two do not evict each other.
+//
+// A miss costs one slot of seven clocks. At clk_sys = 42.666 MHz that is 164 ns,
+// inside one 3.58 MHz Z80 clock of 279 ns, so even a miss usually resolves
+// before the CPU samples WAIT. Refresh takes a slot of its own and is what
+// actually stalls the CPU now and then.
+//
+// The two channels must not be given overlapping address ranges: a write on one
+// does not invalidate the other's cached word.
+//
+// Timing at 42.666 MHz, one clock being 23.4 ns, for a -75 part:
+//   tRCD  20 ns  ACTIVE to READ/WRITE is 1 clock, 23.4 ns
+//   tRC   66 ns  one slot is 7 clocks, 164 ns
+//   tRAS  44 ns  covered by the same slot
+//   tRFC  66 ns  refresh gets a whole slot
+//   CAS latency 2, which the part allows below 100 MHz
+//
+//-----------------------------------------------------------------------------
 
 module sdram
 (
-   input             init,        // reset to initialize RAM
-   input             clk,         // clock ~100MHz
-                                  //
-                                  // SDRAM_* - signals to the MT48LC16M16 chip
-   inout  reg [15:0] SDRAM_DQ,    // 16 bit bidirectional data bus
+   input             init,        // hold in reset until the PLL has locked
+   input             clk,         // clk_sys, 42.666 MHz
+
+   inout      [15:0] SDRAM_DQ,    // 16 bit bidirectional data bus
    output reg [12:0] SDRAM_A,     // 13 bit multiplexed address bus
-   output reg        SDRAM_DQML,  // two byte masks
-   output reg        SDRAM_DQMH,  // 
+   output            SDRAM_DQML,  // two byte masks, driven from the address bus
+   output            SDRAM_DQMH,  //
    output reg  [1:0] SDRAM_BA,    // two banks
    output            SDRAM_nCS,   // a single chip select
    output            SDRAM_nWE,   // write enable
    output            SDRAM_nRAS,  // row address select
-   output            SDRAM_nCAS,  // columns address select
+   output            SDRAM_nCAS,  // column address select
    output            SDRAM_CKE,   // clock enable
-                                  //
-   input       [1:0] wtbt,        // 16bit mode:  bit1 - write high byte, bit0 - write low byte,
-                                  // 8bit mode:  2'b00 - use addr[0] to decide which byte to write
-                                  // Ignored while reading.
-                                  //
-   input      [24:0] addr,        // 25 bit address for 8bit mode. addr[0] = 0 for 16bit mode for correct operations.
-   output     [15:0] dout,        // data output to cpu
-   input      [15:0] din,         // data input from cpu
-   input             we,          // cpu requests write
-   input             rd,          // cpu requests read
-   output reg        ready        // dout is valid. Ready to accept new read/write.
+
+   // ch0: the cartridge, and the ioctl download that fills it
+   input      [24:0] ch0_addr,
+   input             ch0_rd,
+   input             ch0_wr,
+   input       [7:0] ch0_din,
+   output      [7:0] ch0_dout,
+   output            ch0_ready,
+
+   // ch1: the ADAM memory expander
+   input      [24:0] ch1_addr,
+   input             ch1_rd,
+   input             ch1_wr,
+   input       [7:0] ch1_din,
+   output      [7:0] ch1_dout,
+   output            ch1_ready
 );
 
-assign SDRAM_nCS  = command[3];
-assign SDRAM_nRAS = command[2];
-assign SDRAM_nCAS = command[1];
-assign SDRAM_nWE  = command[0];
-assign SDRAM_CKE  = 1;
-assign {SDRAM_DQMH,SDRAM_DQML} = SDRAM_A[12:11];
+assign SDRAM_nCS = 1'b0;
+assign SDRAM_CKE = 1'b1;
+assign {SDRAM_nRAS, SDRAM_nCAS, SDRAM_nWE} = cmd;
+assign {SDRAM_DQMH, SDRAM_DQML} = SDRAM_A[12:11];
 
-assign dout       = latched ? data_l : data_d;
+// Driven only for the one cycle a WRITE command is on the bus. Written as an
+// output enable rather than a registered 'z because a non blocking assignment of
+// high impedance is something Verilator cannot elaborate, and this way the
+// controller can still be linted.
+reg [15:0] dq_out;
+reg        dq_oe;
+assign SDRAM_DQ = dq_oe ? dq_out : 16'bZZZZZZZZZZZZZZZZ;
 
-// no burst configured
-localparam BURST_LENGTH        = 3'b000;   // 000=1, 001=2, 010=4, 011=8
-localparam ACCESS_TYPE         = 1'b0;     // 0=sequential, 1=interleaved
-localparam CAS_LATENCY         = 3'd2;     // 2 for < 100MHz, 3 for >100MHz
-localparam OP_MODE             = 2'b00;    // only 00 (standard operation) allowed
-localparam NO_WRITE_BURST      = 1'b1;     // 0= write burst enabled, 1=only single access write
-localparam MODE                = {3'b000, NO_WRITE_BURST, OP_MODE, CAS_LATENCY, ACCESS_TYPE, BURST_LENGTH};
+localparam BURST_LENGTH   = 3'd0; // 0=1, 1=2, 2=4, 3=8, 7=full page
+localparam ACCESS_TYPE    = 1'd0; // 0=sequential, 1=interleaved
+localparam CAS_LATENCY    = 3'd2; // 2 below 100MHz, 3 above
+localparam OP_MODE        = 2'd0; // only 0 (standard operation) allowed
+localparam NO_WRITE_BURST = 1'd1; // 0=write burst enabled, 1=only single access write
+localparam MODE = {3'b000, NO_WRITE_BURST, OP_MODE, CAS_LATENCY, ACCESS_TYPE, BURST_LENGTH};
 
-localparam sdram_startup_cycles= 14'd12100;// 100us, plus a little more, @ 100MHz
-localparam cycles_per_refresh  = 14'd780;  // (64000*100)/8192-1 Calc'd as (64ms @ 100MHz)/8192 rose
-localparam startup_refresh_max = 14'b11111111111111;
+localparam RASCAS_DELAY = 3'd1;
+localparam STATE_IDLE   = 3'd0;
+localparam STATE_START  = STATE_IDLE + 3'd1;              // 1: ACTIVE
+localparam STATE_CONT   = STATE_START + RASCAS_DELAY;     // 2: READ or WRITE
+localparam STATE_READY  = STATE_CONT + CAS_LATENCY + 3'd2;// 6: data has arrived
+localparam STATE_LAST   = STATE_READY;
 
-// SDRAM commands
-localparam CMD_INHIBIT         = 4'b1111;
-localparam CMD_NOP             = 4'b0111;
-localparam CMD_ACTIVE          = 4'b0011;
-localparam CMD_READ            = 4'b0101;
-localparam CMD_WRITE           = 4'b0100;
-localparam CMD_BURST_TERMINATE = 4'b0110;
-localparam CMD_PRECHARGE       = 4'b0010;
-localparam CMD_AUTO_REFRESH    = 4'b0001;
-localparam CMD_LOAD_MODE       = 4'b0000;
+localparam CMD_NOP          = 3'b111;
+localparam CMD_ACTIVE       = 3'b011;
+localparam CMD_READ         = 3'b101;
+localparam CMD_WRITE        = 3'b100;
+localparam CMD_PRECHARGE    = 3'b010;
+localparam CMD_AUTO_REFRESH = 3'b001;
+localparam CMD_LOAD_MODE    = 3'b000;
 
-reg [13:0] refresh_count = startup_refresh_max - sdram_startup_cycles;
-reg  [3:0] command = CMD_INHIBIT;
-reg [24:0] save_addr;
+// 8192 rows every 64 ms is one refresh every 333 clocks at 42.666 MHz.
+localparam REFRESH_PERIOD = 11'd333;
 
-reg        latched;
-reg [15:0] data;
-wire[15:0] data_l = save_addr[0] ? {data[7:0],     data[15:8]}     : {data[15:8],     data[7:0]};
-wire[15:0] data_d = save_addr[0] ? {SDRAM_DQ[7:0], SDRAM_DQ[15:8]} : {SDRAM_DQ[15:8], SDRAM_DQ[7:0]};
+reg  [2:0] cmd = CMD_NOP;
+reg  [2:0] state = STATE_IDLE;
 
-typedef enum
-{
-	STATE_STARTUP,
-	STATE_OPEN_1, STATE_OPEN_2,
-	STATE_WRITE,
-	STATE_READ,
-	STATE_IDLE,	  STATE_IDLE_1, STATE_IDLE_2, STATE_IDLE_3,
-	STATE_IDLE_4, STATE_IDLE_5, STATE_IDLE_6, STATE_IDLE_7
-} state_t;
+// The access being serviced.
+reg [22:0] a;
+reg  [1:0] bank;
+reg  [7:0] wdata;
+reg        we;
+reg        ram_req;     // 1 = a real bus cycle, 0 = the slot is a refresh
+reg        serving;     // which channel the slot belongs to
+reg  [1:0] busy;        // that channel has a slot in flight
 
+// Captured requests. A strobe is latched the moment it rises rather than when
+// the controller happens to be free, because hps_io's ioctl_wr is a single cycle
+// pulse and would otherwise be lost whenever the other channel or a refresh has
+// the bus.
+//
+// Reads and writes are held apart so that a channel can have one of each
+// outstanding. A Z80 writing a byte and reading it straight back does exactly
+// that if a refresh delays the write, and sharing one address register between
+// the two would answer the read from the write's address.
+reg [24:0] rq_a [0:1];
+reg        rq   [0:1];
+reg [24:0] wq_a [0:1];
+reg  [7:0] wq_d [0:1];
+reg        wq   [0:1];
+
+// The last word each channel read, and which byte of it is being answered.
+reg [23:0] last_a  [0:1];
+reg [15:0] last_d  [0:1];
+reg        last_ok [0:1];
+reg        sel_hi  [0:1];
+
+assign ch0_dout = sel_hi[0] ? last_d[0][15:8] : last_d[0][7:0];
+assign ch1_dout = sel_hi[1] ? last_d[1][15:8] : last_d[1][7:0];
+
+// A channel is ready when it has nothing queued and nothing in flight. Deriving
+// it rather than pulsing it means a read queued behind a write cannot be
+// answered early, whatever order the two arrive in. A read that hits the cached
+// word queues nothing, so ready never drops and the CPU is not stalled at all.
+assign ch0_ready = ~(rq[0] | wq[0] | busy[0] | booting);
+assign ch1_ready = ~(rq[1] | wq[1] | busy[1] | booting);
+
+// Power up: the part wants 100 us of NOPs, then all banks precharged, two
+// refreshes and the mode register. One slot is 164 ns, so counting slots gives
+// each command far more than the tRP, tRFC and tMRD it needs, and 2047 slots of
+// waiting is 336 us. init comes from the PLL lock, which on its own is already
+// long after power on, so this is belt and braces.
+reg [10:0] boot_slot = 11'h7FF;
+wire       booting   = (boot_slot != 0);
+reg  [2:0] boot_cmd;
+
+always @(*) begin
+   case (boot_slot)
+      11'd20:  boot_cmd = CMD_PRECHARGE;
+      11'd15:  boot_cmd = CMD_AUTO_REFRESH;
+      11'd10:  boot_cmd = CMD_AUTO_REFRESH;
+      11'd5:   boot_cmd = CMD_LOAD_MODE;
+      default: boot_cmd = CMD_NOP;
+   endcase
+end
+
+reg [11:0] refresh_cnt;
+wire refresh_due  = (refresh_cnt >= {REFRESH_PERIOD, 1'b0}); // overdue: takes the bus
+wire refresh_want = (refresh_cnt >= {1'b0, REFRESH_PERIOD}); // due: takes a free slot
+
+wire [1:0] dqm = {we & ~a[0], we & a[0]};
+
+// The bus, sampled every clock. The top level drives SDRAM_CLK from ~clk_sys, so
+// the part clocks half a cycle ahead of us: a READ issued in STATE_CONT is latched
+// in the middle of the next slot state and its data is on the bus by the clock
+// edge that begins STATE_READY, which is the edge this register catches it on.
+// Inverting SDRAM_CLK is therefore not cosmetic - without it every read would be
+// sampled a cycle early.
+reg [15:0] sdram_q;
+
+//-----------------------------------------------------------------------------
+// Access manager: captures requests, arbitrates, and answers the channels.
+//-----------------------------------------------------------------------------
 always @(posedge clk) begin
-	reg old_we, old_rd;
-	reg [CAS_LATENCY:0] data_ready_delay;
+   reg old_rd0, old_wr0, old_rd1, old_wr1;
 
-	reg [15:0] new_data;
-	reg  [1:0] new_wtbt;
-	reg        new_we;
-	reg        new_rd;
-	reg        save_we = 1;
+   refresh_cnt <= refresh_cnt + 1'd1;
 
-	state_t state = STATE_STARTUP;
+   // ---- capture ------------------------------------------------------------
+   old_rd0 <= ch0_rd;
+   if (ch0_rd & ~old_rd0) begin
+      if (last_ok[0] && (last_a[0] == ch0_addr[24:1])) begin
+         sel_hi[0] <= ch0_addr[0];        // already have the word: no bus cycle
+      end else begin
+         rq[0]     <= 1'b1;
+         rq_a[0]   <= ch0_addr;
+      end
+   end
+   old_wr0 <= ch0_wr;
+   if (ch0_wr & ~old_wr0) begin
+      wq[0]      <= 1'b1;
+      wq_a[0]    <= ch0_addr;
+      wq_d[0]    <= ch0_din;
+      last_ok[0] <= 1'b0;                 // the cached word may be what we wrote over
+   end
 
-	command <= CMD_NOP;
-	refresh_count  <= refresh_count+1'b1;
+   old_rd1 <= ch1_rd;
+   if (ch1_rd & ~old_rd1) begin
+      if (last_ok[1] && (last_a[1] == ch1_addr[24:1])) begin
+         sel_hi[1] <= ch1_addr[0];
+      end else begin
+         rq[1]     <= 1'b1;
+         rq_a[1]   <= ch1_addr;
+      end
+   end
+   old_wr1 <= ch1_wr;
+   if (ch1_wr & ~old_wr1) begin
+      wq[1]      <= 1'b1;
+      wq_a[1]    <= ch1_addr;
+      wq_d[1]    <= ch1_din;
+      last_ok[1] <= 1'b0;
+   end
 
-	data_ready_delay <= {1'b0, data_ready_delay[CAS_LATENCY:1]};
+   // ---- arbitrate ----------------------------------------------------------
+   if (state == STATE_IDLE) begin
+      if (booting) begin
+         state <= STATE_START;
+      end
+      // An overdue refresh outranks the channels; a merely due one waits for a
+      // slot nobody wants, so the CPU is stalled as little as possible.
+      else if (refresh_due) begin
+         ram_req     <= 1'b0;
+         refresh_cnt <= refresh_cnt - {1'b0, REFRESH_PERIOD} + 1'd1;
+         state       <= STATE_START;
+      end
+      // ch0 is the cartridge, so it outranks the expander: it carries the Z80's
+      // instruction stream. Within a channel the write goes first, because a
+      // write queued alongside a read is always the older of the two.
+      else if (wq[0]) begin
+         wq[0]     <= 1'b0;
+         we        <= 1'b1;
+         {bank, a} <= wq_a[0];
+         wdata     <= wq_d[0];
+         serving   <= 1'b0;
+         busy[0]   <= 1'b1;
+         ram_req   <= 1'b1;
+         state     <= STATE_START;
+      end
+      else if (rq[0]) begin
+         rq[0]     <= 1'b0;
+         we        <= 1'b0;
+         {bank, a} <= rq_a[0];
+         serving   <= 1'b0;
+         busy[0]   <= 1'b1;
+         ram_req   <= 1'b1;
+         state     <= STATE_START;
+      end
+      else if (wq[1]) begin
+         wq[1]     <= 1'b0;
+         we        <= 1'b1;
+         {bank, a} <= wq_a[1];
+         wdata     <= wq_d[1];
+         serving   <= 1'b1;
+         busy[1]   <= 1'b1;
+         ram_req   <= 1'b1;
+         state     <= STATE_START;
+      end
+      else if (rq[1]) begin
+         rq[1]     <= 1'b0;
+         we        <= 1'b0;
+         {bank, a} <= rq_a[1];
+         serving   <= 1'b1;
+         busy[1]   <= 1'b1;
+         ram_req   <= 1'b1;
+         state     <= STATE_START;
+      end
+      else if (refresh_want) begin
+         ram_req     <= 1'b0;
+         refresh_cnt <= refresh_cnt - {1'b0, REFRESH_PERIOD} + 1'd1;
+         state       <= STATE_START;
+      end
+   end
+   else begin
+      state <= (state == STATE_LAST) ? STATE_IDLE : state + 3'd1;
+   end
 
-	// make it ready 1T in advance
-	if(data_ready_delay[1]) {latched, ready} <= {1'b0, 1'b1};
-	if(data_ready_delay[0]) {latched, data}  <= {1'b1, SDRAM_DQ};
+   // ---- answer -------------------------------------------------------------
+   if (state == STATE_READY) begin
+      if (booting) begin
+         boot_slot <= boot_slot - 1'd1;
+      end
+      else if (ram_req) begin
+         busy <= 2'b00;
+         if (!we) begin
+            last_d[serving]  <= sdram_q;
+            last_a[serving]  <= {bank, a[22:1]};
+            last_ok[serving] <= 1'b1;
+            sel_hi[serving]  <= a[0];
+         end
+      end
+   end
 
-	case(state)
-		STATE_STARTUP: begin
-			//------------------------------------------------------------------------
-			//-- This is the initial startup state, where we wait for at least 100us
-			//-- before starting the start sequence
-			//-- 
-			//-- The initialisation is sequence is 
-			//--  * de-assert SDRAM_CKE
-			//--  * 100us wait, 
-			//--  * assert SDRAM_CKE
-			//--  * wait at least one cycle, 
-			//--  * PRECHARGE
-			//--  * wait 2 cycles
-			//--  * REFRESH, 
-			//--  * tREF wait
-			//--  * REFRESH, 
-			//--  * tREF wait 
-			//--  * LOAD_MODE_REG 
-			//--  * 2 cycles wait
-			//------------------------------------------------------------------------
-			SDRAM_DQ   <= 16'bZZZZZZZZZZZZZZZZ;
-			SDRAM_A    <= 0;
-			SDRAM_BA   <= 0;
+   if (init) begin
+      boot_slot   <= 11'h7FF;
+      state       <= STATE_IDLE;
+      refresh_cnt <= 0;
+      ram_req     <= 1'b0;
+      busy        <= 2'b00;
+      rq[0]       <= 1'b0;
+      wq[0]       <= 1'b0;
+      rq[1]       <= 1'b0;
+      wq[1]       <= 1'b0;
+      last_ok[0]  <= 1'b0;
+      last_ok[1]  <= 1'b0;
+   end
+end
 
-			// All the commands during the startup are NOPS, except these
-			if(refresh_count == startup_refresh_max-31) begin
-				// ensure all rows are closed
-				command     <= CMD_PRECHARGE;
-				SDRAM_A[10] <= 1;  // all banks
-				SDRAM_BA    <= 2'b00;
-			end else if (refresh_count == startup_refresh_max-23) begin
-				// these refreshes need to be at least tREF (66ns) apart
-				command     <= CMD_AUTO_REFRESH;
-			end else if (refresh_count == startup_refresh_max-15) 
-				command     <= CMD_AUTO_REFRESH;
-			else if (refresh_count == startup_refresh_max-7) begin
-				// Now load the mode register
-				command     <= CMD_LOAD_MODE;
-				SDRAM_A     <= MODE;
-			end
+//-----------------------------------------------------------------------------
+// Bus: commands and addresses, keyed on the slot state.
+//-----------------------------------------------------------------------------
+always @(posedge clk) begin
+   dq_oe   <= 1'b0;
+   sdram_q <= SDRAM_DQ;
 
-			//------------------------------------------------------
-			//-- if startup is complete then go into idle mode,
-			//-- get prepared to accept a new command, and schedule
-			//-- the first refresh cycle
-			//------------------------------------------------------
-			if(!refresh_count) begin
-				state   <= STATE_IDLE;
-				ready   <= 1;
-				refresh_count <= 0;
-			end
-		end
+   cmd     <= CMD_NOP;
+   SDRAM_A <= 13'd0;
 
-		STATE_IDLE_7: state <= STATE_IDLE_6;
-		STATE_IDLE_6: state <= STATE_IDLE_5;
-		STATE_IDLE_5: state <= STATE_IDLE_4;
-		STATE_IDLE_4: state <= STATE_IDLE_3;
-		STATE_IDLE_3: state <= STATE_IDLE_2;
-		STATE_IDLE_2: state <= STATE_IDLE_1;
-		STATE_IDLE_1: begin
-			SDRAM_DQ   <= 16'bZZZZZZZZZZZZZZZZ;
-			state      <= STATE_IDLE;
-			// mask possible refresh to reduce colliding.
-			if(refresh_count > cycles_per_refresh) begin
-            //------------------------------------------------------------------------
-            //-- Start the refresh cycle. 
-            //-- This tasks tRFC (66ns), so 6 idle cycles are needed @ 100MHz
-            //------------------------------------------------------------------------
-				state    <= STATE_IDLE_7;
-				command  <= CMD_AUTO_REFRESH;
-				refresh_count <= refresh_count - cycles_per_refresh + 1'd1;
-			end
-		end
+   if (state == STATE_START) SDRAM_BA <= booting ? 2'b00 : bank;
 
-		STATE_IDLE: begin
-			// Priority is to issue a refresh if one is outstanding
-			if(refresh_count > (cycles_per_refresh<<1)) state <= STATE_IDLE_1;
-			else if(new_rd | new_we) begin
-				new_we   <= 0;
-				new_rd   <= 0;
-				save_addr<= addr;
-				save_we  <= new_we;
-				state    <= STATE_OPEN_1;
-				command  <= CMD_ACTIVE;
-				SDRAM_A  <= addr[13:1];
-				SDRAM_BA <= addr[24:23];
-			end
-		end
-
-		// ACTIVE-to-READ or WRITE delay >20ns (-75)
-		STATE_OPEN_1: begin
-			SDRAM_A     <= '1;
-			state       <= STATE_OPEN_2;
-		end
-		STATE_OPEN_2: begin
-			SDRAM_A     <= {save_we & (new_wtbt ? ~new_wtbt[1] : ~save_addr[0]), save_we & (new_wtbt ? ~new_wtbt[0] :  save_addr[0]), 2'b10, save_addr[22:14]};
-			state       <= save_we ? STATE_WRITE : STATE_READ;
-		end
-
-		STATE_READ: begin
-			state       <= STATE_IDLE_5;
-			command     <= CMD_READ;
-			SDRAM_DQ    <= 16'bZZZZZZZZZZZZZZZZ;
-
-			// Schedule reading the data values off the bus
-			data_ready_delay[CAS_LATENCY] <= 1;
-		end
-
-		STATE_WRITE: begin
-			state       <= STATE_IDLE_5;
-			command     <= CMD_WRITE;
-			SDRAM_DQ    <= new_wtbt ? new_data : {new_data[7:0], new_data[7:0]};
-			ready       <= 1;
-		end
-	endcase
-
-	if(init) begin
-		state <= STATE_STARTUP;
-		refresh_count <= startup_refresh_max - sdram_startup_cycles;
-	end
-
-	old_we <= we;
-	if(we & ~old_we) {ready, new_we, new_data, new_wtbt} <= {1'b0, 1'b1, din, wtbt};
-
-	old_rd <= rd;
-	if(rd & ~old_rd) begin
-		if(ready & ~save_we & (save_addr[24:1] == addr[24:1])) save_addr <= addr;
-			else {ready, new_rd} <= {1'b0, 1'b1};
-	end
+   if (booting) begin
+      if (state == STATE_START) begin
+         cmd <= boot_cmd;
+         if (boot_cmd == CMD_LOAD_MODE)      SDRAM_A <= MODE;
+         else if (boot_cmd == CMD_PRECHARGE) SDRAM_A <= 13'b0010000000000; // A10: all banks
+      end
+   end
+   else if (ram_req) begin
+      if (state == STATE_START) begin
+         cmd     <= CMD_ACTIVE;
+         SDRAM_A <= a[13:1];
+      end
+      else if (state == STATE_CONT) begin
+         cmd     <= we ? CMD_WRITE : CMD_READ;
+         // A10 high is auto precharge, so the row closes itself and the next
+         // slot can open any row it likes.
+         SDRAM_A <= {dqm, 2'b10, a[22:14]};
+         // The byte goes on both halves and DQM picks the one that lands.
+         if (we) begin
+            dq_out <= {wdata, wdata};
+            dq_oe  <= 1'b1;
+         end
+      end
+   end
+   else if (state == STATE_START) begin
+      cmd <= CMD_AUTO_REFRESH;
+   end
 end
 
 endmodule

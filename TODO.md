@@ -18,9 +18,10 @@ can sweep in the background.
   - [ ] Run `./finalize.sh work/carts_spin` if the labels are wanted for the record.
 - [x] **B. Uridium's freeze** - fixed, and confirmed on hardware. Two faults, the lost fifth
   sprite (`b6f6e63`) and the unwaited SDRAM read (`a88e4ff`).
-- [ ] **C. Gauntlet's maze** - it plays well but still breaks up when scrolling, with both fixes
-  in. Not ours alone: the stock ColecoVision core does the same. Next step is footage of the real
-  thing, not more simulation. Section 8.
+- [x] **C. Gauntlet's maze** - settled 2026-09-19: **not a core bug, the game tears itself.**
+  The footage that was wanted exists - "Gauntlet - Colecovision" by ed1475, uploaded 2019-02-01,
+  described as "Recorded using the real hardware" with the Opcode SGM - and it shows the same
+  breakup. See section 8 for the evidence trail.
 - [x] **D. The "black-screen" test cartridges** - they are not black. In Computer mode, where an
   ADAM diagnostic belongs, System Hardware Test reports "FAIL CONTROLLER PORT #1", "FAIL AUX.
   VIDEO" and "FAIL AUX. AUDIO", and ADAM Final Test 3.3 waits at a "STATION ID -" prompt for
@@ -28,12 +29,14 @@ can sweep in the background.
 - [ ] **E. Triage the sweep titles never looked at** (section 5): Pitfall II, Zenji and
   Squish 'Em Sam differ; Adventure Pack 1-3, Evolution, Journey to Maraud Mountain and
   Tournament Tennis are close.
-- [ ] **F. Cosmo Fighter II's star field** (section 6). The oldest open bug and the most work:
-  a CPU trace against ColEm up to the first star write.
+- [x] **F. Cosmo Fighter II's star field** (section 6). Fixed 2026-09-21, and it was never in the
+  VDP: `TV80_REFRESH` was undefined in both builds, so the Z80 had no R register and `LD A,R`
+  returned a constant 0. The game seeds its stars from R. No `.rbf` carries the fix yet.
 
-Needs hardware, not this machine: the rest of section 1, the spinner checklist in 6a (which also
-needs a new Quartus build, since no `.rbf` on the MiSTer contains `cv_spinner.sv`), and the
-multicart reset check in section 8.
+Needs hardware, not this machine: the rest of section 1, the spinner checklist in 6a, and the
+multicart reset check in section 8. None of them needs a new build any more - `cv_spinner.sv` has
+shipped since `releases/ColecoAdam_20260918.rbf`, and `docs/builds/ColecoAdam_20260922_refresh.rbf`
+carries the expander and the R register on top of it. `HANDOFF.md` is the checklist.
 
 ## 1. Try the September fixes on a MiSTer
 
@@ -62,7 +65,10 @@ a keyboard.
   - [ ] Run the checkout through, and check that OSD Reset returns to SmartWRITER.
 - [ ] RAM test cartridges at 64K, 256K and None: check the colours on the monitor. MiSTer
   screenshots of them were stale.
-- [ ] Buck Rogers high score save, played to the end on hardware.
+- [x] Buck Rogers high score save on hardware, reported by a tester 2026-09-21: **the DSK
+  version works**, and writing from SmartWRITER works with a 1.44MB DSK. That covers the disk
+  path end to end on real hardware, including a disk image far larger than the 160K standard.
+  The **DDP (tape)** version is still unconfirmed - see section 2, which is the tape path.
 - [ ] Commit in pieces once hardware looks right:
   - [ ] the simulator
   - [ ] the comparison framework
@@ -103,7 +109,9 @@ came before that fix.
 - [ ] Reproduce in the simulator with `SoftwareFromMiSTer/E.O.S/Games/Buck Rogers - Planet of
   Zoom Super Game (1983) (Coleco).ddp` (on a copy). Script `--press` input to reach game over
   and the initials entry, then check that the image changed and the game carries on.
-- [ ] Do the same with the `.dsk` version, to separate tape from disk.
+- [x] Do the same with the `.dsk` version, to separate tape from disk. Done on hardware by a
+  tester 2026-09-21: Super Buck on DSK works, and SmartWRITER writes to a 1.44MB DSK. So the
+  fault, if any remains, is in the tape path rather than shared write code.
 - [ ] Run the ADAM Tape-Disk Verification Rev. 1 cartridge (`adam_carts/`) against a blank DDP
   from `Blank Media/`.
 - [ ] Re-run the July write tests: `_wrtest/cpmtest.dsk` against `_wrtest/golden.dsk`, and
@@ -113,8 +121,12 @@ came before that fix.
 
 ## 3. Expansion RAM
 
-- [ ] **Bug: the upper half of the 64K Memory Expander is missing.** Port 7Fh upper bits `10`
-  select 32K Expansion RAM (ADAM Technical Manual 2.2).
+- [x] **Bug: the upper half of the 64K Memory Expander is missing.** Fixed; see the next item.
+  Re-verified 2026-09-21 at every size with `hardware_tests/banktest/uppertest.col`, which walks
+  all 32 banks through the upper window (7Fh = 0Bh, worker relocated to RAM at 7000h because the
+  expander covers where the cartridge lives). Counts match the lower window exactly: none and 64K
+  give 0, then 4, 8, 16, 32. Port 7Fh upper bits `10` select 32K Expansion RAM (ADAM Technical
+  Manual 2.2).
   - `cv_addr_dec.sv` decodes it (`expansion_ram_ce_n_o`), but nothing answers:
     `cv_console.sv`'s bus mux ignores it, and `ColecoAdam.sv`/`sim.v` have no RAM behind it, so
     it reads FFh. The lower half (`lowerexpansion_ram`) exists.
@@ -132,7 +144,9 @@ came before that fix.
   lower window), which is its bank probe, and carries on normally.
 - [ ] Test the 64K expander:
   - [ ] 64K Expansion RAM Test cartridge (`colrom/`)
-  - [ ] RAMTEST v2.0 (Eric Pearson) and RAMTest Rel 2.0 (Orphanware)
+  - [x] RAMTEST v2.0 (Eric Pearson): run on a DE10-Nano 2026-09-21, reports "32 Banks Detected"
+    at the 2M setting and walks them. RAMTest Rel 2.0 (Orphanware) turns out to be an address
+    range tester rather than a sizer, so it says nothing about the expander.
   - [ ] CP/M or T-DOS reporting the extra memory
 - [x] **AdamNet ignores the memory map.** Fixed 2026-09-13: `cv_console.sv` now passes the
   AdamNet strobes only when intrinsic RAM is selected (`ram_ce_n_s` or `upper_ram_ce_n_s`).
@@ -165,8 +179,7 @@ came before that fix.
     - T-DOS boots with 256K.
   - Hardware: the RAM adds about 1.5 Mbit of BRAM, still to check on the MiSTer.
   - 512K/1MB remain open (SDRAM, below).
-- [ ] The original item, for the remaining sizes: add an OSD option, Expansion RAM: None / 64K / 256K / 512K / 1MB. Keep "None" for
-  software that behaves differently with an expander fitted.
+- [x] The original item, done 2026-09-18: the OSD offers 64K / 256K / 512K / 1M / 2M / None.
 - [ ] **Beyond 64K** (MicroFox 256K/512K/1MB cards, Lundy 1MB board; both need an addressor
   signal). MESS's adam.c documents port 42h: "42-42 (W) = Expansion RAM page selection, only
   useful if expansion greater than 64k". Still unknown:
@@ -197,22 +210,29 @@ came before that fix.
       - They also contain a RAM-disk routine that walks banks with `OUT (42h),A`.
       - So booting any T-DOS disk exercises memory beyond 64K, and 42h is the RAM bank port
         there.
-- [ ] **Put large expansion RAM in SDRAM.** 1MB does not fit in BRAM: the Cyclone V has about
+- [x] **Put large expansion RAM in SDRAM.** Done 2026-09-18, commit `337ebcd`; see section 3a
+  for the controller and 3b for the card behaviour. The fit went from 466 of 553 M10K blocks to
+  210. 1MB did not fit in BRAM: the Cyclone V has about
   5.5 Mbit (~700 KB) of M10K in total, shared with the MiSTer framework, and the core's RAMs and
   ROMs already take about 1.4 Mbit.
   - The core already requires SDRAM and uses it for cartridge ROM (the first 1 MB).
   - Map the expansion at an offset such as 100000h and share `sdram.sv`'s single request port;
     the Z80 only makes one access at a time.
   - Give `sim.v` the same memory.
-- [ ] **Power Paint** shows a memory readout on its second splash screen - reportedly up to 512K,
-  though perhaps not the whole range. A good way to see what a real program thinks the expander
-  holds, so run it at each Expansion RAM setting and read that number off the screen.
+- [x] **Power Paint**'s memory readout, checked 2026-09-18 in simulation and on hardware: it
+  reads 64, 256 and 512 at the matching settings, and 512 at 1M and 2M as well. That ceiling is
+  its own - its sizer counts to four banks past the base and then stores a saturated code - not
+  the core's.
 - [ ] Test beyond-64K software:
   - [ ] T-DOS and CP/M 2.2 RAM disks
   - [ ] EOS RAM disks (ADAM's Desktop, SmartDSK, MegaDisk)
   - [ ] RAM Test v1.3 & Utilities (AJM, CP/M)
-  - [ ] RAMTEST v2.0
-  - [ ] RAM-disk contents surviving a reset, as they do on hardware
+  - [x] RAMTEST v2.0 - 32 banks on hardware, above
+  - [x] RAM-disk contents surviving a reset, as they do on hardware. They do, and it bites:
+    RAMTEST leaves its 2680h marker at offset 0086h of every bank, a core reset does not clear
+    SDRAM, so a second run reads its own marker back, reads it as an alias and reports 0 banks.
+    Faithful - a warm reset does not clear DRAM on a real ADAM either - but worth knowing before
+    reading a 0 as a fault.
 - [ ] Accept the introduction to John Lundy (Lundy Electronics). Questions for him:
   - [ ] Port 42h layout and reset state.
   - [ ] Addressor behaviour.
@@ -430,16 +450,31 @@ the program read from, while a torn or half-updated screen points at timing.
 
 ## 6. Known bugs
 
-- [ ] Cosmo Fighter II's star field is missing. Compare a CPU trace against ColEm up to the
-  first star write.
-- [ ] Re-check README's known bugs, then update README (its "tape/disk write is not supported"
-  line is out of date for floppies):
+- [x] The simulator drove both controllers from one keyboard (`joystick_1 = joystick_0`), so a
+  two player game was unplayable. Fixed 2026-09-19: player 2 is on I/J/K/L plus F and G, and the
+  recording format grew a third column for its bits. Recordings written before the fix have two
+  columns and `--replay` drives both ports from them, so they still reproduce what they
+  captured - checked by replaying one and comparing frames byte for byte.
+- [x] Cosmo Fighter II's star field is missing. Fixed 2026-09-21: `TV80_REFRESH` was never
+  defined, so `LD A,R` read back a constant 0. See `STATUS.md`.
+- [x] Re-check README's known bugs and update it. Done 2026-09-21: the typing bug and the
+  "tape/disk write is not supported" line are gone (disk writes confirmed on hardware by a
+  tester, tape implemented but not yet confirmed), and the README gained an **Expansion RAM**
+  section. That section exists to stop the same two questions coming back as issues: PowerPAINT
+  reporting 512 for any card 512K or larger, which is its own sizer saturating, and RAMTEST
+  reporting "0 Banks Detected" on a second run, which is it reading back the 2680h marker it
+  stamped at offset 0086h of every bank - a reset does not clear the expander, exactly as a warm
+  reset does not clear DRAM on a real ADAM. Reload the core to run it again.
   - [x] a bad character the first time something is typed: fixed in commit 1029386 (July
     2026) and checked on a DE10-Nano. EOS used to read the key after the PS/2 value had moved
     on to the release event (^@), and a blocked keyboard read swallowed keystrokes.
   - [ ] reset not quite like an ADAM
   - [ ] no printer
   - [ ] key repeat
+  - [x] Cosmo Fighter II's star field was listed there as a known bug. Moved to the "fixed since
+    this list was written" paragraph on 2026-09-21, naming the cause. Note the README now runs
+    ahead of the releases: the fix is in the tree and no published `.rbf` has it yet, so the next
+    build needs to go out reasonably promptly.
 
 ## 6a. Spinner and roller controllers
 
@@ -524,7 +559,8 @@ AdamNet and DCB fixes on this branch are the likely reason it works now.
   the menu appears, keypad 1 selects A.E., a skill key starts it, and the game plays. Driven from
   the keyboard with "Keypad on numpad" on, via `config/AdamT_BB.CFG` and
   `_AdamTests/B1 Broderbund disk.mgl`. #9 closed.
-- [ ] Tick Broderbund off #12, which stays open for Uridium and Gauntlet.
+- [ ] Tick Broderbund off #12. Uridium is fixed and Gauntlet is not a core bug, so the
+  issue can be closed once that is written up.
 
 ### #12 Uridium - still reproduces
 
@@ -604,18 +640,38 @@ rather than the memory map.
   - **the stock MiSTer ColecoVision core in SGM mode does the same**, which is no surprise since
     this core started from the ColecoVision parts. A shared bug in the vdp18 lineage rather than
     anything this branch did, so a fix belongs upstream too.
-  - [ ] Settle whether it is a bug at all: find footage of Gauntlet running on a real
-    ColecoVision with a Super Game Module and see whether the maze does the same thing there.
-    The game rewrites the whole name table to scroll, which no ColecoVision can do inside vblank,
-    so some tearing is expected; the question is whether this much is.
-  - [ ] The likely mechanism: the game cannot rewrite the name table inside vblank, so it uses the
-    fifth-sprite number to follow the beam and rewrite behind it. If our 5S flag is reported on a
-    different line than the real chip would, the game rewrites the wrong band. The fix below made
-    the missing numbers appear; the next question is whether they appear on the **right lines**.
-    Record the scanline at each detection and check it against the sprite Y positions in VRAM.
-  - [ ] Reproduce it in simulation first. Gauntlet's own demo reaches the same screens - the
-    status bar reads "PRESS FIRE" in the hardware screenshots too - so a long enough run gets to a
-    complicated maze without having to drive the game.
+  - [x] **Settled 2026-09-19: not a core bug. The game tears itself, and real hardware does it
+    too.** The footage question above is answered - "Gauntlet - Colecovision" by ed1475, uploaded
+    2019-02-01, whose description says "Recorded using the real hardware" with the Opcode SGM,
+    shows the same breakup: https://www.youtube.com/watch?v=olxiDo_rVLo
+
+    Reproduced in simulation and taken apart with the capture hotkeys and the VRAM write log
+    (`captures/writes.txt`, `frame scanline addr data`). Gauntlet splits its screen update
+    across two frames and puts half of it inside the visible picture:
+
+        frame N    rows 0-7  written at scanlines 192-213   (blanking, safe)
+        frame N+1  rows 8-15 written at scanlines  85-117   (mid-picture, tears)
+        frame N+2, N+3  nothing
+
+    Across 51 captured frames the correlation is exact: every frame whose picture was drawn while
+    those 256 writes were happening shows the wall displaced by one tile, and every frame without
+    them is clean. It is not a case of running out of vblank and spilling over the edge either -
+    the whole 4.3 ms blanking was free and the game wrote at scanline 85 anyway, a frame later.
+
+    `verilator/compare/tools/vdpref.py` re-renders the background from the captured tables and
+    confirms the core draws its VRAM exactly; the differing cells are only the ones a write
+    crossed. So the VDP is faithful and the tear is the program's.
+
+    **Why an F18A appeared to fix it.** The F18A renders a whole scanline ahead into a line
+    buffer (`f18a_tiles.vhd`, `prescan_start` at `raster_x = 1`), so a write landing mid-line
+    changes the *next* line rather than the one being drawn, and the tear is hidden. That is
+    masking, not fixing, and it is less faithful than the real chip - the same direction as its
+    dual-ported VRAM, which drops the access windows the real part has. rampa069's 2022 note on
+    this issue was reading a nicer picture as a more correct one.
+
+    Two claims in the older notes above are wrong and left only for the record: the 2022 report's
+    "does not happen on real hardware" (it does), and the idea that the game follows the beam
+    using the fifth-sprite number (it writes at a fixed point in the frame instead).
 - Tearing was also noticed on the monitor, separately from that. It is not the core: six screenshots
   taken while it was happening are all clean, and a MiSTer screenshot comes from the core's own
   framebuffer, so a tear the core produced would be in them. `/media/fat/MiSTer.ini` has
@@ -704,12 +760,110 @@ Timing is not a problem: the NES controller is written for up to 128 MHz with it
 delays sized for 85 MHz, and our `clk_sys` is 42.666 MHz, so every constraint is
 met with room to spare.
 
-- [ ] Port `NES_MiSTer/rtl/sdram.sv`, cartridge on ch0 and expander on ch1, and
-  drive `refresh` from the video blanking the core already has.
-- [ ] Do it only once the card behaviour below is known. How many bits of port 42h
+- [x] Port `NES_MiSTer/rtl/sdram.sv`, cartridge on ch0 and expander on ch1.
+- [x] Do it only once the card behaviour below is known. How many bits of port 42h
   a real 512K or 1MB card latches, and whether both 32K windows follow the same
   bank, decides the address map - and guessing at exactly those semantics is what
   produced the PowerPAINT bug in the first place.
+
+### What was actually built, 2026-09-18
+
+Two channels rather than three - there is no third master - and `ready` per channel
+rather than `busy`, so the wait chain keeps the shape `cart_wait_n` already had.
+Two things were changed from the NES design on purpose:
+
+- **Refresh stayed internal.** Making it an input only helps if the core has a
+  quiet window to spend it in, and driving it from video blanking cannot work:
+  the part needs a refresh every 7.8 us and a scanline is 63.7 us, so blanking is
+  eight times too slow. Instead an overdue refresh outranks the channels and a
+  merely due one waits for a slot nobody wants. Now that `a88e4ff` makes the CPU
+  wait properly, a refresh landing on a read costs a wait state instead of
+  corrupting the read, which is what it used to do.
+- **A cached read never enters the state machine.** The NES version runs the full
+  seven clock slot even when the byte is already in the channel's latched word,
+  which would have put a wait state where the single port controller had none. The
+  fast path answers from the register with `ready` never dropping, so the cartridge
+  path costs exactly what it did before.
+
+Requests are also captured the moment a strobe rises rather than when the
+controller is free, because `ioctl_wr` is a single cycle pulse, and reads and
+writes queue separately so a Z80 writing a byte and reading it straight back
+cannot have the read answered from the write's address.
+
+SDRAM map: cartridge at 000000-0FFFFF, expander at 200000-3FFFFF. The two must not
+overlap - a write on one channel does not invalidate the other's cached word.
+
+### Verified by `verilator/sdram_tb/`
+
+The core's own simulator cannot check this: it clocks `clk_sys` at the 10.7 MHz
+rate with `ce_10m7` tied high, so a seven clock slot there would be two and a half
+Z80 clocks instead of the half clock it is on hardware, and every access would look
+like a stall. So the controller has its own testbench against a behavioural chip
+model. `cd verilator/sdram_tb && make`. It checks round trips on both channels
+across bank, row and column bits, that sequential bytes hit the cached word (32 of
+64 reads free), that the channels do not evict each other (32 of 64 free when
+interleaved), a read queued behind a write, and the refresh rate.
+
+Writing it caught the one thing worth catching: the exact cycle the chip's data is
+on the bus. The board drives `SDRAM_CLK` from `~clk_sys`, so the part clocks half a
+cycle ahead of the controller, and the read has to be sampled half a cycle *after*
+the CAS latency edge. The anchor for that is the single port controller this core
+shipped with, which samples three controller clocks after issuing READ and works on
+the hardware; the model is built to match it, and is commented to say so, because
+a model that released the bus half a period earlier would fail a correct controller.
+
+### Confirmed on the MiSTer, 2026-09-18
+
+Built with Quartus 17.0.2 and run on the DE10-Nano as
+`_Computer/ColecoAdam_20260918_expander.rbf`, md5 e89c476ef186dce68a64b70ac1e774c3.
+
+The bank walk cartridge (`hardware_tests/banktest/`, MGLs R7-R12) paints the screen
+with the number of banks it found. Every size is right, and every colour is the
+same value the simulator produced:
+
+| setting | hardware | |
+|---|---|---|
+| None | black | nothing answers |
+| 64K | black | no bank register, every bank aliased |
+| 256K | rgb(33,200,66) green | 4 banks |
+| 512K | rgb(84,85,237) blue | 8 banks |
+| 1M | rgb(252,85,84) red | 16 banks |
+| 2M | white | **32 banks, all distinct** |
+
+PowerPAINT (MGLs P1-P4) reads 64, 256 and 512 at the matching settings, so the
+sizer that started this whole thread now agrees with the hardware.
+
+Nothing regressed: Uridium - the cartridge whose corruption `a88e4ff` fixed - draws
+its title screen cleanly, and SmartWRITER, Frogger, Super Cobra and Donkey Kong Jr
+all boot. The 179 cartridge sweep is unchanged at 170 PASS, 2 DRIFT, 7 REVIEW with
+the same titles in each bucket.
+
+- [x] Sustained expander traffic, checked 2026-09-21: **RAMTEST v2.0 (2018) by Eric Pearson**,
+  who designed the EXPAnDDR expander, reports "32 Banks Detected" with the 2M setting on a
+  DE10-Nano and walks them. Independent confirmation of the full 2MB from software written
+  for real expander hardware, and it works the channel far harder than the bank walk does.
+- [ ] RAMTEST v2.0 does not run in the simulator. The disk boots, the program takes the VDP
+  (R0=00 then R1=E0 at frame 16) and writes no further register for 7,000 frames, leaving a
+  black screen with VRAM all zeros. Same at every expander size including None, so it is not
+  the expander. A disk boot that does work, PowerPAINT, sets R0 at frame 16 then R1, R2, R3,
+  R4 and R7 at frame 18. The same disk runs on hardware, so this is a simulator problem -
+  likely AdamNet or disk timing - and worth finding, because it costs us a test the hardware
+  can run and the simulator cannot.
+
+### What it cost, from the Quartus 17.0.2 fit
+
+| | before (20260918) | after |
+|---|---|---|
+| M10K blocks | 466 / 553 (84%) | **210 / 553 (38%)** |
+| block memory bits | 3,638,757 | 1,541,605 |
+| ALMs | 15,551 (37%) | 15,293 (36%) |
+| clk_sys setup slack | - | +3.586 ns of 23.432 |
+
+The 256 blocks the 256K expander used are back, and the core now has room for
+whatever wants block RAM next. The two channel controller costs slightly *fewer*
+ALMs than the single port one it replaced, which is the word cache and the boot
+sequence being simpler than the old controller's eight idle states. Timing passes
+with no failing paths at all - TNS is 0.000 on every clock.
 
 ## 3b. How the expanders bank, settled 2026-09-18
 
@@ -722,10 +876,34 @@ Bank 0 at power-up. A 64K card has no bank logic at all and needs no addressor.
 
 So an expander larger than 256K needs, on top of the SDRAM work in section 3a:
 
-- [ ] widen `exp_ram_bank` from 2 bits to 3 or 4, and widen the "bank past the last one fitted"
-  test that `2f68257` added;
-- [ ] extend the OSD list past 256K;
-- [ ] nothing else about the interface - port 42h and the data bus are already right.
+- [x] widen `exp_ram_bank` from 2 bits to 3 or 4, and widen the "bank past the last one fitted"
+  test that `2f68257` added. Done as `rtl/cv_expander.sv`, which now holds the whole decode -
+  windows, bank register, absent test - and is shared by `ColecoAdam.sv` and `verilator/sim.v`
+  so the two cannot drift. Five bits of bank, so 2MB.
+- [ ] extend the OSD list past 256K (the simulator's `--exp-ram` already takes
+  `64|256|512|1024|2048|none`; the OSD still has to move to a three bit field);
+- [x] nothing else about the interface - port 42h and the data bus are already right.
+
+### Proved in simulation, 2026-09-18
+
+`hardware_tests/banktest/` builds a cartridge that writes `bank^5A` at offset 0000 and
+`bank^A5` at offset 4000 of all 32 banks, reads them all back, and reports the run of good
+banks from bank 0. Results come out in VRAM at 3800h for the simulator and as the backdrop
+colour for a screen, so the same cartridge is the hardware check once the expander is in SDRAM.
+
+| setting | banks counted | read back | PowerPAINT shows |
+|---|---|---|---|
+| None | 0 | all FF | 64 |
+| 64K | 0 | every bank the last write, `45` | 64 |
+| 256K | 4 | 5A 5B 58 59 then FF | 256 |
+| 512K | 8 | through 5D then FF | 512 |
+| 1M | 16 | through 55 then FF | 512 |
+| 2M | 32 | all 32 distinct, to 45 | 512 |
+
+Both columns are right. The 64K card aliasing every bank to one 64K is what a card with no
+bank register does, and PowerPAINT stopping at 512 is its own sizer saturating: it counts to
+four banks past the base and then stores code 7, so it cannot tell 512K from 2MB. No period
+software we have counts higher, which is why the test cartridge exists.
 
 - [ ] Ask Eric Pearson (EXPAnDDR, MIB238, RAMTEST v2.0) or Michael Carter (Coleco-Cheap-Memory,
   Coleco-2MB-Memory) to confirm the original Orphanware and Micro Innovations cards latch the same

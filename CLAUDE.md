@@ -3,8 +3,9 @@
 MiSTer FPGA core for the Coleco ADAM computer and the ColecoVision console: a SystemVerilog
 conversion of Arnim Laeuger's ColecoVision core with AdamNet (keyboard, disks, tapes) adapted
 from ColEm. `STATUS.md` records where the testing and bug fixing currently stand, and `TODO.md`
-is the work list. `HANDOFF.md` is the hardware test plan for branch `adam-accuracy-fixes`: what
-each fix changes, the checks to run on a MiSTer, and how to back a single fix out.
+is the work list. `HANDOFF.md` is the hardware test plan for whatever branch is currently awaiting
+testing on a MiSTer - what each change does, the checks to run, and how to back one out; it names
+the branch and the `.rbf` at the top, and `hardware_tests/` is the kit it refers to.
 `docs/`, `ColEm56-Source/`, the software library and ROM collection stay local and are not in
 git.
 
@@ -22,7 +23,7 @@ git.
 | `rtl/cv_adamnet.sv` | AdamNet devices and the PS/2 to ADAM key tables |
 | `rtl/track_loader_adam.sv` | Moves disk/tape blocks between AdamNet and the SD image |
 | `rtl/vdp18v/` | TMS9918A (SystemVerilog). `rtl/vdp18/` is the older VHDL |
-| `rtl/tv80/` | Z80 used by both hardware and simulation. `rtl/T80/` is unused |
+| `rtl/tv80/` | Z80 used by both hardware and simulation. `rtl/T80/` is unused. `TV80_REFRESH` is its only `ifdef` and is `define`d in `tv80_core.v` and `tv80e.v` themselves, not in the `.qsf` or the simulator Makefile: it went undefined in both build systems for years, which left the R register non-existent and `LD A,R` returning 0. Don't move it back into a build file |
 | `rtl/{bios,writer,eos}.hex` | OS-7 BIOS, SmartWriter, EOS. `verilator/rtl/` has identical copies for the simulator |
 | `verilator/` | Verilator simulator (see below) |
 | `verilator/compare/` | Core vs ColEm comparison framework; read its `README.md` |
@@ -58,10 +59,45 @@ Build and run from `verilator/` (the ROMs load by the relative path `rtl/*.hex`)
 Options: `--cart`, `--console`/`--adam`, `--headless`, `--frames N`, `--shots F1,F2`,
 `--every K`, `--outdir`, `--press KEY@FRAME[:N]` (controller 1), `--disk N FILE`,
 `--tape N FILE`, `--type TEXT@FRAME`, `--key NAME@FRAME` (ADAM keyboard),
-`--exp-ram 64|256|0` (memory expander, matching the OSD's Expansion RAM option),
+`--exp-ram 64|256|512|1024|2048|none` (memory expander, matching the OSD's Expansion RAM option),
 `--spin STEPS@FRAME[:N]` and `--spin2` (roller/spinner, matching the OSD's Spinner option),
-`--peek ADDR[:N]@FRAME` (print RAM bytes; the index is the Z80 address, except that console
-mode mirrors its 1K so 7038h is index 6038h). Frames are saved as 320×240 PPMs.
+`--peek [v:]ADDR[:N]@FRAME` (print RAM bytes by Z80 address, `v:` for VRAM; console mode mirrors
+its 1K so 7038h is index 6038h), `--record FILE` and `--replay FILE`. Frames are saved as
+320×240 PPMs.
+
+`--record`/`--replay` are for faults somewhere a scripted `--press` cannot reach. Play the game
+in the GUI with `--record`, which writes one `frame bits` line per input change, then re-run the
+same session headless with `--replay` and whatever probes you want. The core has no randomness,
+so the replay is frame-identical; the only imprecision is that a press made part way through a
+frame replays from that frame's start. Recordings are small and worth keeping as scenarios.
+
+Every saved frame gets a `frame_NNNNN.vdp` beside it: the eight VDP control registers then the
+whole 16K of VRAM. `verilator/compare/tools/vdpref.py --vdp FILE --frame FILE.ppm` re-renders the
+background from those tables in software and names the cells where the core's picture disagrees
+with them. That is the ground truth to reach for when a game looks wrong and there is nothing to
+compare against - ColEm will not run every cartridge, and it settles "the VDP drew this wrongly"
+against "the game put this in VRAM" without needing hardware. It draws no sprites, so cells under
+a sprite always show up as differences.
+
+In the GUI, **`[`** starts capturing frames, **`]`** stops, and **`\`** grabs the current frame;
+each writes `cap_NNNNN.ppm` plus the same `.vdp` state, into `--capture-dir` (default
+`./captures`). That is how to get a picture *and* the state behind it out of a glitch you can
+only reach by playing. (Not function keys: a Mac laptop puts those behind fn.)
+
+Keyboard in the GUI. Player 1's indices are also the joystick bit order the core's `J,` CONF_STR
+defines: arrows are the directions, **A** is Fire 1 and **B** is Fire 2, the **number row sends
+the keypad digit printed on it**, `,` and `.` are `*` and `#`, **P** and **U** are the Super
+Action purple and blue triggers, and **M** opens the system menu. Player 2 is **I/J/K/L** for
+up/left/down/right with **F** and **G** for its fire buttons; it has no keypad, since player 1's
+gets through a game's menus.
+
+Two things here were wrong before 2026-09-19 and are worth knowing when reading older material.
+Only 13 inputs existed and they were wired by position, so `1` sent keypad 3, keypad 1 was on
+`E`, keypad 5-9 were unreachable, and `M` sent keypad 4 as well as opening the menu. And
+`joystick_1` was simply assigned `joystick_0`, so both players moved together and a two player
+game could not be played. Recordings made before the fix have two columns instead of three;
+`--replay` detects that and drives both ports together, so they still reproduce the session they
+captured.
 
 Things to know:
 - Headless speed is about 9 frames/s (1300 frames ≈ 150 s). Runs are single-threaded
@@ -110,6 +146,13 @@ RTL. The same applies to ColEm patches. `setup.sh` makes two, each backed by doc
 - Text mode drawn at +6 px instead of +8, per the datasheet.
 - One extra T-state per M1 cycle, the game board's WAIT flip-flop (`COLEM_M1_WAIT=0` turns it
   off). With it the core and ColEm stay frame-exact.
+
+Reading a sweep: check `core_exit` in each `result.txt` before believing a verdict. Anything other
+than 0 is a **run** failure, not a result - the row should be discarded and re-run, not
+investigated. Sweeps launched as background jobs lose their in-flight `Vemu` children when the
+job's process group is torn down, which shows up as a handful of alphabetically adjacent FAILs that
+had scored `match=1.0000` on every shot they reached before dying. `finalize.sh` is also what
+reclassifies DRIFT, so a sweep summary without it shows timing-drift titles as REVIEW.
 
 ## Hardware references
 

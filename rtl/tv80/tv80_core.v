@@ -26,6 +26,21 @@
 
 `define TV80DELAY
 
+// A Z80 refreshes DRAM during T3/T4 of every M1 cycle, and keeps the 7-bit R counter to
+// supply the row address, so LD A,R reads a value that advances with every instruction
+// fetched. Without this, R does not exist: LD A,R returns a constant 0 and RFSH_N is tied
+// high. Cosmo Fighter II seeds its star field from R and draws no stars at all when the
+// read never changes. Defined in the file rather than in the Quartus and simulator build
+// files so that the two cannot disagree about it - them getting out of step is how it came
+// to be off everywhere in the first place.
+// Turning it on also makes MREQ_N pulse during the refresh cycle (tv80e.v), as the real
+// part does; cv_addr_dec and cv_console already qualify every memory strobe with
+// RFSH_N, so those cycles are ignored. Z80 CPU User Manual UM008011, "Instruction
+// Fetch" and the R register under "CPU Registers".
+`ifndef TV80_REFRESH
+ `define TV80_REFRESH 1
+`endif
+
 module tv80_core (/*AUTOARG*/
   // Outputs
   m1_n, iorq, no_read, write, rfsh_n, halt_n, busak_n, A, dout, mc,

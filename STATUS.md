@@ -28,8 +28,8 @@ Where testing and bug fixing stood on 2026-09-13. The work is committed on branc
   All are confirmed in simulation, except that nothing yet exercises PCB relocate. The
   hardware test plan is in `HANDOFF.md`.
 - A simulator harness bug that crashed on any write to drives 2-7 is fixed as well.
-- One cartridge difference is still unexplained (Cosmo Fighter II's missing star field). Two ADAM
-  test cartridges show a black screen, before and after the fixes.
+- Every cartridge difference now has an explanation: the last one, Cosmo Fighter II's missing
+  star field, was the Z80's R register being compiled out (fixed 2026-09-21, below).
 - Built with Quartus 17.0.2 and tried on a DE10-Nano on 2026-09-13. Every check that was
   scripted passed; the RAM test cartridges still need checking by eye. Results are in
   `HANDOFF.md` section 3a.
@@ -41,14 +41,17 @@ the fixes:
 
 | Suite | Before | After |
 |---|---|---|
-| 179 cartridges, Console mode, 1300 frames with scripted input | 164 PASS, 3 DRIFT, 12 REVIEW | 170 PASS, 2 DRIFT, 7 REVIEW |
+| 179 cartridges, Console mode, 1300 frames with scripted input | 164 PASS, 3 DRIFT, 12 REVIEW | 171 PASS, 2 DRIFT, 6 REVIEW |
 | 12 ADAM scenarios (SmartWRITER typing and keys, 9 disks, 1 tape) | 10 MATCH, 1 CLOSE, 1 DIFFERS | 12 MATCH |
+
+"After" is the current tree, so it includes work from after the accuracy fixes: the cartridge run
+was 170 PASS, 2 DRIFT, 7 REVIEW when those landed, and Cosmo Fighter II became the 171st PASS with
+the R register fix on 2026-09-21. The DRIFT pair only shows as DRIFT once `finalize.sh` has run.
 
 - **Now passing:**
   - Cartridges: Super Cobra, Crown Jewels I-III, Power Lords, Aquattack, Kevtris, Slither.
   - ADAM scenarios: Adam Links Golf and SmartWRITER typing now match.
 - **Still REVIEW:**
-  - Cosmo Fighter II (open, below).
   - Artillery Duel, Jungle Hunt, Wizmath, Bejeweled and Blockade Runner (not core bugs, below).
   - Steamroller: the core shows the right title screen at every compared frame, but ColEm
     shows a plain green screen. This is ColEm's fault: with the M1 patch it fails whichever
@@ -278,9 +281,8 @@ published privately at https://claude.ai/code/artifact/7b51e7a0-f8a9-4861-95a8-b
 
 ### Nothing waited for the SDRAM when reading the cartridge (2026-09-18)
 
-- **Symptom:** Uridium and Gauntlet misbehave on hardware while playing correctly in simulation.
-  Uridium corrupts its screen when a game starts; Gauntlet's maze breaks up into displaced bands
-  when scrolling. The same Gauntlet breakup happens on the stock MiSTer ColecoVision core.
+- **Symptom:** Uridium corrupts its screen when a game starts. Gauntlet's maze was thought to be
+  the same fault, but is not - see below; this fix cured Uridium and left Gauntlet unchanged.
 - **Cause:** on hardware the cartridge is in SDRAM. `ColecoAdam.sv` left the controller's
   `.ready()` output unconnected, while `cart_rd` and `cart_a_o` are combinational from the
   address decode and `cart_d_i` is muxed straight onto the CPU data bus. `sdram.sv` answers a
@@ -297,17 +299,73 @@ published privately at https://claude.ai/code/artifact/7b51e7a0-f8a9-4861-95a8-b
   ties `cart_ready_i` high, and Frogger's frames are identical either side of the change. This
   one can only be judged on hardware.
 
+### Gauntlet's maze breaking up is the game, not the core (2026-09-19)
+
+- **Symptom:** wall runs step sideways by a tile while the maze scrolls, on this core and on the
+  stock MiSTer ColecoVision core. Reported on issue #12 in 2022 as "flashing blocks on the walls".
+- **Not the core.** `verilator/compare/tools/vdpref.py` re-renders the background from the
+  captured VDP tables and registers and compares it with the frame the core drew: the core draws
+  its VRAM exactly, and the only cells that differ are ones a CPU write crossed mid-picture.
+- **What the game does.** The VRAM write log (`[` and `]` in the simulator GUI, written to
+  `captures/writes.txt` as `frame scanline addr data`) shows Gauntlet splitting its screen update
+  over two frames and putting half of it inside the visible picture: rows 0-7 at scanlines
+  192-213, which is blanking and safe, then rows 8-15 at scanlines 85-117 a frame later, which is
+  mid-picture. Over 51 captured frames every frame drawn while those writes were happening is
+  displaced and every other frame is clean. It is not vblank overrun - the whole 4.3 ms was free
+  and the game wrote at scanline 85 anyway.
+- **Confirmed against real hardware.** "Gauntlet - Colecovision" by ed1475 (2019-02-01,
+  https://www.youtube.com/watch?v=olxiDo_rVLo), described as "Recorded using the real hardware"
+  with the Opcode SGM, shows the same stepped walls.
+- **Why an F18A looked like a fix.** It renders a scanline ahead into a line buffer, so a write
+  landing mid-line changes the next line instead of the current one and the tear is hidden. That
+  is masking rather than fixing, and it is less faithful than the real part - as is its
+  dual-ported VRAM, which drops the CPU access windows the TMS9918A actually has.
+- **Two older claims that were wrong:** the 2022 report's "this doesn't happen on a real system",
+  and the idea that the game follows the beam using the fifth-sprite number. It writes at a fixed
+  point in the frame instead.
+
+### Disk writes confirmed on hardware (2026-09-21)
+
+A tester reports that writing from SmartWRITER works with a **1.44MB DSK**, and that the **DSK
+version of Buck Rogers Super Game works** - which is the high score save that first raised the
+question. So the disk write path is good on real hardware, including images far larger than the
+160K standard.
+
+Note what this does and does not cover. Both reports are DSK. Tapes go through the same track
+loader on drives 4-7 but have their own AdamNet code, and tape writes were only implemented in
+September (they used to be a `$display` and a `$finish`, which on hardware left the AdamNet
+state machine stuck for good). The **DDP path is still unconfirmed on hardware** - section 2 of
+TODO.md is the tape one.
+
+### Cosmo Fighter II's star field: the Z80 had no R register (2026-09-21)
+
+The oldest open bug, and it was never in the VDP. `TV80_REFRESH` was not defined in either build,
+and it is the only `ifdef` in tv80. With it off the R register does not exist: `LD A,R` returns a
+constant 0, `LD R,A` is discarded, and `RFSH_N` is tied high. Cosmo Fighter II seeds its star
+field from R, so a read that never changes gives it nothing to scatter - which is why the game
+"never writes the stars to VRAM". Everything ruled out earlier (CPU speed and the M1 fix, VDP
+read-ahead and write-back timing, VDP rendering, the RAM map, cartridge padding and mirroring)
+was ruled out correctly; the missing piece was upstream of all of it.
+
+- **Fix:** a self-guarding `` `ifndef TV80_REFRESH / `define `` in `tv80_core.v` and `tv80e.v`.
+  It is in the RTL rather than in `ColecoAdam.qsf` and `verilator/Makefile` on purpose: the two
+  build systems disagreeing is how the define came to be off everywhere, and an in-file define
+  cannot be lost. It is repeated in both files because neither Quartus nor Verilator promises an
+  order for them, and a macro only reaches the file compiled after it.
+- **The part that needed checking was not `LD A,R`.** Turning the define on also makes `MREQ_N`
+  pulse during M1 T4 with `{I, R}` on the address bus - a bus cycle on *every* M1 that did not
+  exist before. `cv_addr_dec.sv` and `cv_console.sv` are the only files in the tree that touch
+  `mreq_n`, and all twelve sites already qualify on `rfsh_n`, so those cycles are ignored. The
+  decode was written for refresh from the start; the gating had been sitting as dead code.
+- **Check:** every Cosmo Fighter II metric improved - shot fgmatch 0.9442/0.9530/0.9558/0.5324/
+  0.4437 to 0.9747/0.9704/0.9628/0.6073/0.5382, still_match 0.9791 to 0.9842 - and the cartridge
+  moved from REVIEW to PASS. The 179 cartridge sweep has no regressions: 176 are bit-identical,
+  and Squares and Squish 'Em Sam shift by under 0.4% on one shot each *in both directions*, which
+  is animation phase from an RNG that now has a live R to seed from. Of the 12 ADAM scenarios 11
+  are identical and Diablo's worst_fg improves 0.9611 to 0.9647; both SmartWRITER scenarios match
+  in every metric, which is the AdamNet keyboard path the new refresh cycles would have disturbed.
+
 ## Still open
-
-- **Cosmo Fighter II's star field is missing.** ColEm draws about 100 dots a frame, the core
-  0-3, because the game never writes them to VRAM. Ruled out:
-  - CPU speed, including the M1 fix
-  - VDP read-ahead and write-back timing (no stale reads or lost writes in 511,000 accesses)
-  - VDP rendering
-  - the RAM map
-  - cartridge padding and mirroring
-
-  Next idea: compare the CPU trace against ColEm up to the first star write.
 - **System Hardware Test and ADAM Final Test 3.3 are not black after all** (checked 2026-09-18 in
   Computer mode, where an ADAM diagnostic belongs). Both run:
   - System Hardware Test draws its title and reports "FAIL CONTROLLER PORT #1", "FAIL AUX.
@@ -349,6 +407,7 @@ published privately at https://claude.ai/code/artifact/7b51e7a0-f8a9-4861-95a8-b
 |---|---|---|
 | Hardware fixes | `rtl/cv_addr_dec.sv`, `rtl/cv_console.sv`, `rtl/vdp18v/vdp18_hor_vert.sv`, `ColecoAdam.sv` | The four fixes above |
 | Spinner | `rtl/cv_ctrl.sv`, `rtl/cv_spinner.sv`, `files.qip`, `ColecoAdam.sv`, `verilator/sim.v` | Roller/spinner strobe, interrupt and signal generation; Quartus now builds `cv_ctrl.sv` rather than `cv_ctrl.vhd` |
+| CPU | `rtl/tv80/tv80_core.v`, `rtl/tv80/tv80e.v` | Define `TV80_REFRESH` in the RTL, so the Z80 has its R register and refresh cycle in both builds |
 | Simulator | `verilator/Makefile`, `verilator/sim.v`, `verilator/sim_main.cpp`, `verilator/sim/sim_video.*`, `verilator/sim/sim_adam_keys.h` | Build fixes for Verilator 5.044, `--no-timing`, no waveform dump, always-on 10.7 MHz enable, headless mode and command-line options, cartridge reset |
 | Debug output | `rtl/bram.sv`, `rtl/dpramv.sv`, `rtl/cv_adamnet.sv`, `rtl/track_loader_adam.sv` | Per-access `$display` behind `SIM_DEBUG` |
 | Comparison | `verilator/compare/` | Framework, ColEm harness and patches, cartridge/ADAM/library scripts, report builder |
@@ -392,7 +451,7 @@ features, is in `TODO.md`.
    the rest.
 2. Run `library_scenarios.sh` over `E.O.S/Games` (about 2 hours), then the rest of `E.O.S/`
    and `CP-M & T-DOS/`, and triage whatever doesn't boot or match.
-3. Chase Cosmo Fighter II with a CPU trace comparison.
+3. Build an `.rbf` carrying the R register fix - no released bitstream has it yet.
 4. Look at why System Hardware Test and Final Test stay black.
 5. Commit in reviewable pieces: simulator, comparison framework, then each hardware fix on its
    own.

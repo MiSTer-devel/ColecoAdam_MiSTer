@@ -38,9 +38,39 @@ def write_png(path, w, h, rgb):
     open(path, 'wb').write(png)
 
 
+def crop(w, h, rgb, x, y, cw, ch):
+    cw, ch = min(cw, w - x), min(ch, h - y)
+    rows = [rgb[((y + r) * w + x) * 3:((y + r) * w + x + cw) * 3] for r in range(ch)]
+    return cw, ch, b''.join(rows)
+
+
+def scale(w, h, rgb, n):
+    """Nearest neighbour, so a 240 line frame stays readable when a detail is 30 px wide."""
+    out = []
+    for y in range(h):
+        row = rgb[y * w * 3:(y + 1) * w * 3]
+        big = b''.join(row[x * 3:(x + 1) * 3] * n for x in range(w))
+        out.extend([big] * n)
+    return w * n, h * n, b''.join(out)
+
+
 if __name__ == '__main__':
-    for src in sys.argv[1:]:
+    # ppm2png.py [--crop X,Y,W,H] [--scale N] file.ppm...
+    args, box, mag = sys.argv[1:], None, 1
+    while args and args[0].startswith('--'):
+        opt = args.pop(0)
+        if opt == '--crop':
+            box = [int(v) for v in args.pop(0).split(',')]
+        elif opt == '--scale':
+            mag = int(args.pop(0))
+        else:
+            sys.exit(f'unknown option {opt}')
+    for src in args:
         w, h, rgb = read_ppm(src)
+        if box:
+            w, h, rgb = crop(w, h, rgb, *box)
+        if mag > 1:
+            w, h, rgb = scale(w, h, rgb, mag)
         dst = src.rsplit('.', 1)[0] + '.png'
         write_png(dst, w, h, rgb)
         print(f'{dst} {w}x{h}')

@@ -147,6 +147,11 @@ module cv_console
         // High when cart_d_i is valid. Tie high where the cartridge is in block RAM and
         // answers in the same cycle, as the simulator does.
         input                        cart_ready_i,
+	// Low while a memory expander access is still in flight. The expander's own
+	// decode lives outside this module, in cv_expander, so the top level works out
+	// when it is waiting and hands the answer in here. Tie high where the expander
+	// is block RAM, as the simulator does by default.
+	input                        exp_wait_n_i,
         input [5:0]                  cart_pages_i,
    // extended ROM Interface ------------------------------------------------
    output [19:0]                ext_rom_a_o,
@@ -396,7 +401,11 @@ module cv_console
   logic cart_wait_n;
   assign cart_wait_n = ~(cart_rd & ~cart_ready_i);
 
-  assign wait_n_s = psg_ready_s & (~m1_wait_q) & cart_wait_n & (USE_REQ == 0 ? adamnet_wait_n : '1);
+  // The memory expander waits for the same reason: on hardware it shares the SDRAM
+  // with the cartridge, so a read of it can be a bus cycle away rather than
+  // answered on the spot the way block RAM was.
+  assign wait_n_s = psg_ready_s & (~m1_wait_q) & cart_wait_n & exp_wait_n_i &
+                    (USE_REQ == 0 ? adamnet_wait_n : '1);
 
   //
   //---------------------------------------------------------------------------

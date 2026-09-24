@@ -39,6 +39,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <sys/stat.h>
 #include <iomanip>
 #include <vector>
 #include <chrono>
@@ -50,7 +51,10 @@ using namespace std;
 int initialReset = 48;
 bool run_enable = 1;
 bool adam_mode= 1;
-int exp_ram_mode = 0;   // memory expander for sim.v exp_ram: 0 = 64K, 1 = 256K (port 42h banks), 2 = none
+// Memory expander for sim.v exp_ram, in the OSD's order:
+// 0 = 64K, 1 = 256K, 2 = 512K, 3 = 1M, 4 = 2M, 5 = none. Banks past 64K are
+// selected by port 42h.
+int exp_ram_mode = 0;
 int spin_mode_opt = 0;  // sim.v spin_mode: 0 = off, 1 = spinner device (set by --spin)
 int batchSize = 150000;
 //int batchSize = 100;
@@ -78,20 +82,39 @@ SimBlockDevice blockdevice(console);
 
 // Input handling
 // --------------
-SimInput input(13, console);
+// Indices 0-19 are joystick bits, in the order of the core's "J," CONF_STR entry, so that the
+// loop that builds joystick_0 can just shift by the index. Index 20 is the system menu, which is
+// not a joystick bit and is excluded from that loop.
+SimInput input(30, console);
 const int input_right = 0;
 const int input_left = 1;
 const int input_down = 2;
 const int input_up = 3;
-const int input_a = 4;
-const int input_b = 5;
-const int input_x = 6;
-const int input_y = 7;
-const int input_l = 8;
-const int input_r = 9;
-const int input_select = 10;
-const int input_start = 11;
-const int input_menu = 12;
+const int input_fire1 = 4;
+const int input_fire2 = 5;
+const int input_star = 6;
+const int input_pound = 7;
+const int input_kp0 = 8;        // keypad 0-9 run from here to index 17
+const int input_purple = 18;
+const int input_blue = 19;
+const int input_menu = 20;
+const int input_joy_bits = 20;  // how many of the above are joystick bits
+// Capture hotkeys. Function keys, so they cannot collide with anything the ColecoVision
+// controller needs.
+const int input_cap_start = 21;  // [
+const int input_cap_stop  = 22;  // ]
+const int input_cap_one   = 23;  // backslash
+// Player 2. Only the directions and the two fire buttons: the keypad is on player 1's number
+// row and that is enough to get through a game's menus.
+const int input_p2_right = 24;
+const int input_p2_left  = 25;
+const int input_p2_down  = 26;
+const int input_p2_up    = 27;
+const int input_p2_fire1 = 28;
+const int input_p2_fire2 = 29;
+// Kept for the mouse code below, which wants a couple of buttons by their old names.
+const int input_a = input_fire1;
+const int input_b = input_fire2;
 
 // Video
 // -----
@@ -591,6 +614,167 @@ uint32_t scriptedJoystick(int frame) {
         return bits;
 }
 
+// --record FILE / --replay FILE: play a game in the GUI, then run the same session again headless
+// with probes on. Some faults only show up somewhere a scripted --press sequence cannot reach -
+// several rooms into a game, say - and this is the way to get there and then study it repeatably.
+//
+// The file is one line per change, "frame joystick_bits_in_hex", so it is small, readable, and can
+// be trimmed or hand-edited to isolate a moment. Replay is faithful because the core has no
+// randomness: the same input on the same frames gives the same run. The one imprecision is that a
+// press which happened part way through a frame is replayed from that frame's start.
+struct InputFrame { int frame; uint32_t p1, p2; };
+static FILE* record_fp = nullptr;
+static uint32_t record_prev1 = 0, record_prev2 = 0;
+static bool record_started = false;
+static std::vector<InputFrame> replay_events;
+static size_t replay_next = 0;
+static uint32_t replay_p1 = 0, replay_p2 = 0;
+
+// F5 / F6 / F7 in the GUI: start capturing, stop capturing, capture this one frame.
+//
+// Each capture writes the picture and, beside it, the VDP state that produced it - the eight
+// control registers and the whole 16K of VRAM. That second file is the useful one: with it the
+// background can be re-rendered in software (verilator/compare/tools/vdpref.py) and compared
+// against what the core actually drew, which is what separates "the VDP drew this wrongly" from
+// "the game put this in VRAM". Without it a screenshot of a glitch is only a picture of a glitch.
+static std::string capture_dir = "captures";
+static int capture_from = -1, capture_to = -1;
+
+// While capturing, every CPU write that reaches VRAM is logged with the scanline it landed on.
+// That is what an end-of-frame VRAM snapshot cannot tell you: whether the program changed a
+// table while the beam was already past it. A frame that looks torn is then explained without
+// guessing - either the writes are in the vertical blank, and the core drew a static table
+// wrongly, or they are in the active display, and the tear is the program's own doing.
+//
+// The scanline is the VDP's vertical counter, which is negative in the top border, 0..191 in
+// the active display and 192+ at the bottom, so "was this in blanking" reads straight off it.
+static FILE* write_log = nullptr;
+static int wl_abort_prev = 0;
+static unsigned long wl_lines = 0;
+static int wl_frame_prev = -1;
+
+void logVramWrite(int frame) {
+        if (!write_log) { return; }
+        int abort = VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__abort_wrvram_s;
+        if (abort && !wl_abort_prev) {
+                int addr = VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__addr_q & 0x3FFF;
+                int data = VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__buffer_q;
+                int line = (int16_t)(VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__hor_vert_b__DOT__cnt_vert_q << 7) >> 7;
+                fprintf(write_log, "%d %d %04X %02X\n", frame, line, addr, data);
+                wl_lines++;
+        }
+        wl_abort_prev = abort;
+}
+
+// Eight control register bytes, then the whole 16K of VRAM. vdpref.py reads exactly this.
+void saveVdpState(const std::string& path) {
+        FILE* f = fopen(path.c_str(), "wb");
+        if (!f) { fprintf(stderr, "cannot write %s\n", path.c_str()); return; }
+        for (int r = 0; r < 8; r++) {
+                unsigned char v = VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__ctrl_reg_q[r];
+                fwrite(&v, 1, 1, f);
+        }
+        for (int a = 0; a < 16384; a++) {
+                unsigned char v = VERTOPINTERN->emu__DOT__vram__DOT__mem[a];
+                fwrite(&v, 1, 1, f);
+        }
+        fclose(f);
+}
+static bool capturing = false;
+static int captured = 0;
+
+void captureFrame(int frame, const char* why) {
+        mkdir(capture_dir.c_str(), 0755);
+        char name[64];
+        snprintf(name, sizeof(name), "/cap_%05d.ppm", frame);
+        std::string ppm = capture_dir + name;
+        if (!video.SavePPM(ppm.c_str())) {
+                fprintf(stderr, "cannot write %s\n", ppm.c_str());
+                return;
+        }
+        snprintf(name, sizeof(name), "/cap_%05d.vdp", frame);
+        saveVdpState(capture_dir + name);
+        captured++;
+        printf("capture %s: frame %d -> %s (+.vdp)\n", why, frame, ppm.c_str());
+        fflush(stdout);
+}
+
+void captureStart(int frame) {
+        capturing = true;
+        mkdir(capture_dir.c_str(), 0755);
+        std::string wl = capture_dir + "/writes.txt";
+        write_log = fopen(wl.c_str(), "w");
+        if (write_log) { fprintf(write_log, "# frame scanline vram_addr data\n"); }
+        printf("capture: started at frame %d, writing to %s/\n", frame, capture_dir.c_str());
+        fflush(stdout);
+}
+
+void captureStop(int frame) {
+        capturing = false;
+        if (write_log) { fclose(write_log); write_log = nullptr; }
+        printf("capture: stopped at frame %d, %d frames and %lu vram writes logged\n",
+               frame, captured, wl_lines);
+        fflush(stdout);
+}
+
+void captureHotkeys(int frame) {
+        static bool prev_start = false, prev_stop = false, prev_one = false;
+        bool start = input.inputs[input_cap_start];
+        bool stop  = input.inputs[input_cap_stop];
+        bool one   = input.inputs[input_cap_one];
+
+        if (start && !prev_start && !capturing) { captureStart(frame); }
+        if (stop && !prev_stop && capturing) { captureStop(frame); }
+        if (one && !prev_one) { captureFrame(frame, "single"); }
+        if (capturing) { captureFrame(frame, "run"); }
+
+        prev_start = start; prev_stop = stop; prev_one = one;
+}
+
+void recordJoystick(int frame, uint32_t p1, uint32_t p2) {
+        if (!record_fp) { return; }
+        if (record_started && p1 == record_prev1 && p2 == record_prev2) { return; }
+        fprintf(record_fp, "%d %X %X\n", frame, p1, p2);
+        fflush(record_fp);
+        record_prev1 = p1;
+        record_prev2 = p2;
+        record_started = true;
+}
+
+void replayJoystick(int frame, uint32_t* p1, uint32_t* p2) {
+        while (replay_next < replay_events.size() && replay_events[replay_next].frame <= frame) {
+                replay_p1 = replay_events[replay_next].p1;
+                replay_p2 = replay_events[replay_next].p2;
+                replay_next++;
+        }
+        *p1 = replay_p1;
+        *p2 = replay_p2;
+}
+
+void loadReplay(const std::string& path) {
+        FILE* f = fopen(path.c_str(), "r");
+        if (!f) { fprintf(stderr, "cannot read %s\n", path.c_str()); exit(1); }
+        char line[128];
+        int one_column = 0;
+        while (fgets(line, sizeof(line), f)) {
+                int frame; unsigned p1, p2;
+                int n = sscanf(line, "%d %x %x", &frame, &p1, &p2);
+                if (n == 3) {
+                        replay_events.push_back({frame, p1, p2});
+                } else if (n == 2) {
+                        // Recorded before player 2 had its own keys, when the simulator fed one
+                        // value to both ports. Reproduce that, or the recording stops replaying
+                        // the session it captured.
+                        replay_events.push_back({frame, p1, p1});
+                        one_column++;
+                }
+        }
+        fclose(f);
+        printf("replay: %zu input changes, last at frame %d%s\n", replay_events.size(),
+               replay_events.empty() ? -1 : replay_events.back().frame,
+               one_column ? "  (pre-2026-09-19 format: both ports driven together)" : "");
+}
+
 // --spin/--spin2 STEPS@FRAME[:LEN]: turn the roller STEPS notches per frame for LEN frames.
 // This drives the core the way a MiSTer spinner device does: a signed step count with bit 8
 // toggled on every update.
@@ -599,21 +783,25 @@ std::vector<SpinSpec> spins;
 unsigned char spin_toggle[2] = { 0, 0 };
 
 // --peek [v:]ADDR[:LEN]@FRAME prints bytes of memory when FRAME is reached. Without a prefix it
-// reads the console's RAM array, whose index is the Z80 address in Adam mode; console mode
-// mirrors its 1K, so Z80 7038h is index 6038h. With "v:" it reads the 16K of VRAM instead, which
-// is where the VDP tables live.
+// reads by Z80 address: below 8000h the console's lower RAM array, at 8000h and above the ADAM's
+// upper 32K, which is where EOS keeps its variables. Console mode mirrors its 1K, so Z80 7038h is
+// index 6038h, and has a cartridge rather than RAM above 8000h. With "v:" it reads the 16K of
+// VRAM instead, which is where the VDP tables live.
 struct PeekSpec { int addr; int len; int frame; bool vram; };
 std::vector<PeekSpec> peeks;
+
+static unsigned char peekByte(const PeekSpec& p, int i) {
+        int a = p.addr + i;
+        if (p.vram) { return VERTOPINTERN->emu__DOT__vram__DOT__mem[a & 0x3FFF]; }
+        if (a & 0x8000) { return VERTOPINTERN->emu__DOT__upper_ram__DOT__ram[a & 0x7FFF]; }
+        return VERTOPINTERN->emu__DOT__ram__DOT__ram[a & 0x7FFF];
+}
 
 void scriptedPeek(int frame) {
         for (const PeekSpec& p : peeks) {
                 if (p.frame != frame) { continue; }
                 printf("peek frame %d %s%04X:", frame, p.vram ? "vram " : "", p.addr);
-                for (int i = 0; i < p.len; i++) {
-                        printf(" %02X", p.vram
-                               ? VERTOPINTERN->emu__DOT__vram__DOT__mem[(p.addr + i) & 0x3FFF]
-                               : VERTOPINTERN->emu__DOT__ram__DOT__ram[(p.addr + i) & 0x7FFF]);
-                }
+                for (int i = 0; i < p.len; i++) { printf(" %02X", peekByte(p, i)); }
                 printf("\n");
                 fflush(stdout);
         }
@@ -704,6 +892,15 @@ static unsigned long spr5_flag_steps = 0, spr5_steps = 0;
 // sits in HALT is waiting for this, so "stopped falling" explains a frozen screen.
 static unsigned long vdp_int_falls = 0;
 static int vdp_int_last_frame = -1, vdp_int_prev = 1;
+// A read of the status register is supposed to clear the interrupt flag. vdp18_cpuio writes it as
+//   if (irq_i) int_n_q <= 0; else if (destr_rd_status_s) int_n_q <= 1;
+// so a read that lands in the same cycle the VDP is setting the flag loses its clear and the flag
+// stays set. That is the hazard the F18A changelog calls out as a ColecoVision problem, fixed
+// there by always letting the read win. Counting reads that should have cleared the flag against
+// the times the flag actually rose says how often it bites: a game polling the status register in
+// a tight vblank loop that sees a stale flag will run its next update during the active display.
+static unsigned long vdp_int_rises = 0, vdp_clearing_reads = 0;
+static int vdp_destr_prev = 0;
 // and the MegaCart bank, since a cartridge that stops paging has stopped loading
 // A CPU write to VRAM is held until the VDP can fit it into an access slot. If the program
 // writes again before that happens the earlier byte never reaches VRAM, exactly as on the real
@@ -711,6 +908,17 @@ static int vdp_int_last_frame = -1, vdp_int_prev = 1;
 // never change.
 static unsigned long vram_write_reqs = 0, vram_write_collisions = 0;
 static int vram_sched_prev = 0;
+// How long each of those writes waited for its slot, in 372 ns memory cycles. The datasheet
+// (2.1.6) allows the VDP up to 16 of them in Graphics mode with sprites - "CPU windows occur
+// once every 16 memory cycles giving a maximum delay of 6 microseconds" - so a max of 16 here
+// means the core is reproducing the real access window rather than being more generous than the
+// chip. Buckets: <=1, 2-3, 4-7, 8-15, 16+.
+static unsigned long vram_wait_hist[5] = {0, 0, 0, 0, 0};
+static unsigned long vram_wait_max = 0, vram_wait = 0;
+// abort_wrvram_s is combinational and stays up for the whole access slot, and this loop samples
+// faster than that, so both it and the slot enable need edge detection or every write is counted
+// more than once.
+static int vram_acc_prev = 0, vram_abort_prev = 0;
 static unsigned long mega_switches = 0;
 static int mega_last_frame = -1, mega_prev = -1;
 static std::vector<unsigned long> mega_hist;
@@ -736,7 +944,8 @@ void stepSim() {
                         spr5_flag_steps++;
                         spr5_latched_hist[VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__sprite_5th_num_q & 31]++;
                 }
-                if (vdp_trace) {
+        }
+        if (vdp_trace) {
                         int wr = VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__write_reg_s;
                         if (wr && !vdp_wr_prev) {
                                 int reg = VERTOPINTERN->emu__DOT__console__DOT__d_from_cpu_s & 7;
@@ -746,7 +955,8 @@ void stepSim() {
                                 fflush(stdout);
                         }
                         vdp_wr_prev = wr;
-                }
+        }
+        if (spr5_profile && video.count_frame >= addr_profile_from) {
 
                 int sched = VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__wrvram_sched_q;
                 if (sched && !vram_sched_prev) {
@@ -757,8 +967,28 @@ void stepSim() {
                 }
                 vram_sched_prev = sched;
 
+                int acc = VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__clk_en_acc_s;
+                int pending = sched || VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__wrvram_q;
+                if (acc && !vram_acc_prev && pending) { vram_wait++; }
+                vram_acc_prev = acc;
+                int abort = VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__abort_wrvram_s;
+                if (abort && !vram_abort_prev) {
+                        // The slot that services the write is counted above too, so take it back
+                        // off: the figure wanted is how many slots went by before that one, which
+                        // is what the datasheet's "once every 16 memory cycles" is measuring.
+                        unsigned long w = vram_wait ? vram_wait - 1 : 0;
+                        if (w > vram_wait_max) { vram_wait_max = w; }
+                        vram_wait_hist[w <= 1 ? 0 : w <= 3 ? 1 : w <= 7 ? 2 : w <= 15 ? 3 : 4]++;
+                        vram_wait = 0;
+                }
+                vram_abort_prev = abort;
+
                 int vint = VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__int_n_q;
                 if (vdp_int_prev && !vint) { vdp_int_falls++; vdp_int_last_frame = video.count_frame; }
+                if (!vdp_int_prev && vint) { vdp_int_rises++; }
+                int destr = VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__cpu_io_b__DOT__destr_rd_status_s;
+                if (destr && !vdp_destr_prev && !vint) { vdp_clearing_reads++; }
+                vdp_destr_prev = destr;
                 vdp_int_prev = vint;
 
                 int page = VERTOPINTERN->emu__DOT__console__DOT__addr_dec_b__DOT__megacart_page & 63;
@@ -770,10 +1000,30 @@ void stepSim() {
                 }
                 mega_hist[page]++;
         }
+        // Per step, not per frame: a torn frame is torn because of when inside it the write
+        // happened.
+        if (write_log) { logVramWrite(video.count_frame); }
+        // Mark where the frame counter turns over, with the scanline it happens on. The
+        // picture saved as frame N is the one drawn *before* that mark, so without this the
+        // writes and the frames they belong to can be attributed a frame apart.
+        if (write_log && video.count_frame != wl_frame_prev) {
+                int line = (int16_t)(VERTOPINTERN->emu__DOT__console__DOT__vdp18_b__DOT__hor_vert_b__DOT__cnt_vert_q << 7) >> 7;
+                fprintf(write_log, "# frame counter -> %d at scanline %d\n", video.count_frame, line);
+                wl_frame_prev = video.count_frame;
+        }
+
         if (video.count_frame == last_frame) { return; }
         last_frame = video.count_frame;
 
-        if (headless) { VERTOPINTERN->joystick_0 = scriptedJoystick(last_frame); }
+        if (headless) {
+                uint32_t rp1 = 0, rp2 = 0;
+                replayJoystick(last_frame, &rp1, &rp2);
+                VERTOPINTERN->joystick_0 = scriptedJoystick(last_frame) | rp1;
+                VERTOPINTERN->joystick_1 = rp2;
+                // Recording a headless run too is what lets --press and --replay be checked
+                // against each other: record a scripted run, replay it, compare the frames.
+                recordJoystick(last_frame, VERTOPINTERN->joystick_0, VERTOPINTERN->joystick_1);
+        }
         if (!spins.empty()) { scriptedSpinner(last_frame); }
         if (!peeks.empty()) { scriptedPeek(last_frame); }
 
@@ -786,6 +1036,19 @@ void stepSim() {
                 snprintf(name, sizeof(name), "/frame_%05d.ppm", last_frame);
                 std::string path = shot_dir + name;
                 if (!video.SavePPM(path.c_str())) { fprintf(stderr, "Cannot write %s\n", path.c_str()); }
+                // The VDP state beside every saved frame, so a frame can always be checked
+                // against what its own tables say it should be without running the game again.
+                snprintf(name, sizeof(name), "/frame_%05d.vdp", last_frame);
+                saveVdpState(shot_dir + name);
+        }
+
+        if (!headless) { captureHotkeys(last_frame); }
+        // --capture-frames A-B does the same thing without the GUI, so a session that was
+        // recorded once can be re-captured with different probes.
+        if (capture_from >= 0) {
+                if (last_frame == capture_from && !capturing) { captureStart(last_frame); }
+                if (capturing) { captureFrame(last_frame, "range"); }
+                if (last_frame == capture_to && capturing) { captureStop(last_frame); }
         }
 
         if (run_frames > 0 && last_frame >= run_frames) { exit_requested = true; }
@@ -797,8 +1060,14 @@ void usage(const char* prog) {
                 "  --cart FILE            load a cartridge (.col/.rom/.bin)\n"
                 "  --console              ColecoVision console mode\n"
                 "  --adam                 Adam computer mode (default)\n"
-                "  --exp-ram 64|256|0     memory expander: 64K (default), 256K in port 42h banks, or none\n"
+                "  --exp-ram SIZE         memory expander: 64 (default), 256, 512, 1024, 2048 or none.\n"
+                "                         Past 64K the bank is chosen by port 42h; 64 has no bank register\n"
                 "  --headless             run without a window; requires --frames\n"
+                "  --record FILE         write controller input to FILE while you play in the GUI\n"
+                "  --replay FILE         drive the controller from a FILE written by --record\n"
+                "  --capture-dir DIR     where F5/F6/F7 write captures (default ./captures)\n"
+                "                        F5 start capturing, F6 stop, F7 grab this frame;\n"
+                "                        each writes cap_NNNNN.ppm and cap_NNNNN.vdp (regs+VRAM)\n"
                 "  --frames N             exit after N video frames\n"
                 "  --shots F1,F2,...      save these frames as DIR/frame_NNNNN.ppm\n"
                 "  --every K              save every Kth frame\n"
@@ -831,9 +1100,31 @@ void parseArgs(int argc, char** argv) {
                 else if (arg == "--adam") { adam_mode = 1; }
                 else if (arg == "--exp-ram") {
                         std::string v = value();
-                        exp_ram_mode = v == "256" ? 1 : (v == "0" || v == "none") ? 2 : 0;
+                        // Same order as the OSD's Expansion RAM option, so a sim run and a
+                        // hardware setting mean the same card. Anything unrecognised is 64K,
+                        // which is what the core has always defaulted to.
+                        if (v == "256" || v == "256K") exp_ram_mode = 1;
+                        else if (v == "512" || v == "512K") exp_ram_mode = 2;
+                        else if (v == "1024" || v == "1M") exp_ram_mode = 3;
+                        else if (v == "2048" || v == "2M") exp_ram_mode = 4;
+                        else if (v == "0" || v == "none") exp_ram_mode = 5;
+                        else exp_ram_mode = 0;
                 }
                 else if (arg == "--headless") { headless = true; }
+                else if (arg == "--record") {
+                        std::string path = value();
+                        record_fp = fopen(path.c_str(), "w");
+                        if (!record_fp) { fprintf(stderr, "cannot write %s\n", path.c_str()); exit(1); }
+                }
+                else if (arg == "--replay") { loadReplay(value()); }
+                else if (arg == "--capture-dir") { capture_dir = value(); }
+                else if (arg == "--capture-frames") {
+                        std::string v = value();
+                        size_t dash = v.find('-', 1);
+                        capture_from = atoi(v.c_str());
+                        capture_to = dash == std::string::npos ? capture_from
+                                                               : atoi(v.c_str() + dash + 1);
+                }
                 else if (arg == "--frames") { run_frames = atoi(value().c_str()); }
                 else if (arg == "--every") { shot_every = atoi(value().c_str()); }
                 else if (arg == "--outdir") { shot_dir = value(); }
@@ -976,8 +1267,15 @@ int runHeadless() {
                 for (int i = 0; i < 32; i++) { if (spr5_latched_hist[i]) { printf(" %d:%lu", i, spr5_latched_hist[i]); } }
                 printf("\nvram writes: %lu scheduled, %lu of them while the previous one was still pending\n",
                        vram_write_reqs, vram_write_collisions);
+                printf("  wait for an access slot, in 372ns memory cycles: <=1:%lu 2-3:%lu 4-7:%lu 8-15:%lu 16+:%lu max:%lu\n",
+                       vram_wait_hist[0], vram_wait_hist[1], vram_wait_hist[2],
+                       vram_wait_hist[3], vram_wait_hist[4], vram_wait_max);
                 printf("vdp interrupt: %lu assertions, last at frame %d of %d\n",
                        vdp_int_falls, vdp_int_last_frame, last_frame);
+                printf("  status reads that should have cleared the flag: %lu, flag actually cleared %lu times"
+                       " -> %ld clears lost to the set/clear race\n",
+                       vdp_clearing_reads, vdp_int_rises,
+                       (long)vdp_clearing_reads - (long)vdp_int_rises);
                 printf("megacart: %lu bank switches, last at frame %d; pages used:",
                        mega_switches, mega_last_frame);
                 for (int i = 0; i < 64; i++) { if (mega_hist[i]) { printf(" %d", i); } }
@@ -1101,35 +1399,47 @@ LoadFDI(&Disks[4],"adam.ddp",FMT_DDP);
 
         // Set up input module
         input.Initialise();
+        // Every index has to be set, because SetMapping only writes the ones it is given and the
+        // joystick loop reads all of them.
+        for (int i = 0; i < input.inputCount; i++) { input.SetMapping(i, 0); }
 #ifdef WIN32
         input.SetMapping(input_up, DIK_UP);
         input.SetMapping(input_right, DIK_RIGHT);
         input.SetMapping(input_down, DIK_DOWN);
         input.SetMapping(input_left, DIK_LEFT);
-        input.SetMapping(input_a, DIK_Z); // A
-        input.SetMapping(input_b, DIK_X); // B
-        input.SetMapping(input_x, DIK_A); // X
-        input.SetMapping(input_y, DIK_S); // Y
-        input.SetMapping(input_l, DIK_Q); // L
-        input.SetMapping(input_r, DIK_W); // R
-        input.SetMapping(input_select, DIK_1); // Select
-        input.SetMapping(input_start, DIK_2); // Start
-        input.SetMapping(input_menu, DIK_M); // System menu trigger
-
+        input.SetMapping(input_fire1, DIK_A);
+        input.SetMapping(input_fire2, DIK_B);
+        input.SetMapping(input_menu, DIK_M);
 #else
+        // Arrows and A/B are what this simulator has always used. The number row now sends the
+        // ColecoVision keypad digit it is printed with, which it did not before: "1" used to send
+        // keypad 3 and keypad 1 was on the E key, so a game asking for "press 1" needed E.
         input.SetMapping(input_up, SDL_SCANCODE_UP);
         input.SetMapping(input_right, SDL_SCANCODE_RIGHT);
         input.SetMapping(input_down, SDL_SCANCODE_DOWN);
         input.SetMapping(input_left, SDL_SCANCODE_LEFT);
-        input.SetMapping(input_a, SDL_SCANCODE_A);
-        input.SetMapping(input_b, SDL_SCANCODE_B);
-        input.SetMapping(input_x, SDL_SCANCODE_X);
-        input.SetMapping(input_y, SDL_SCANCODE_Y);
-        input.SetMapping(input_l, SDL_SCANCODE_L);
-        input.SetMapping(input_r, SDL_SCANCODE_E);
-        input.SetMapping(input_start, SDL_SCANCODE_1);
-        input.SetMapping(input_select, SDL_SCANCODE_2);
+        input.SetMapping(input_fire1, SDL_SCANCODE_A);
+        input.SetMapping(input_fire2, SDL_SCANCODE_B);
+        input.SetMapping(input_star, SDL_SCANCODE_COMMA);
+        input.SetMapping(input_pound, SDL_SCANCODE_PERIOD);
+        input.SetMapping(input_kp0, SDL_SCANCODE_0);
+        for (int d = 1; d <= 9; d++) {
+                input.SetMapping(input_kp0 + d, SDL_SCANCODE_1 + (d - 1));
+        }
+        input.SetMapping(input_purple, SDL_SCANCODE_P);
+        input.SetMapping(input_blue, SDL_SCANCODE_U);
         input.SetMapping(input_menu, SDL_SCANCODE_M);
+        // Square brackets and backslash rather than function keys, which a Mac laptop puts
+        // behind fn.
+        input.SetMapping(input_cap_start, SDL_SCANCODE_LEFTBRACKET);
+        input.SetMapping(input_cap_stop,  SDL_SCANCODE_RIGHTBRACKET);
+        input.SetMapping(input_cap_one,   SDL_SCANCODE_BACKSLASH);
+        input.SetMapping(input_p2_up,     SDL_SCANCODE_I);
+        input.SetMapping(input_p2_left,   SDL_SCANCODE_J);
+        input.SetMapping(input_p2_down,   SDL_SCANCODE_K);
+        input.SetMapping(input_p2_right,  SDL_SCANCODE_L);
+        input.SetMapping(input_p2_fire1,  SDL_SCANCODE_F);
+        input.SetMapping(input_p2_fire2,  SDL_SCANCODE_G);
 #endif
         // Setup video output
         if (video.Initialise(windowTitle) == 1) { return 1; }
@@ -1340,12 +1650,23 @@ fprintf(stderr,"filePath: %s\n",filePath.c_str());
                 VERTOPINTERN->menu = input.inputs[input_menu];
 
                 VERTOPINTERN->joystick_0 = 0;
-                for (int i = 0; i < input.inputCount; i++)
+                // Only the first input_joy_bits indices are joystick bits; input_menu is not.
+                for (int i = 0; i < input_joy_bits; i++)
                 {
                         if (input.inputs[i]) { VERTOPINTERN->joystick_0 |= (1 << i); }
                 }
-                VERTOPINTERN->joystick_0 |= scriptedJoystick(video.count_frame);
-                VERTOPINTERN->joystick_1 = VERTOPINTERN->joystick_0;
+                // Player 2's six keys sit at the end of the input list and map onto the bottom
+                // six bits of the second controller: right, left, down, up, fire 1, fire 2.
+                VERTOPINTERN->joystick_1 = 0;
+                for (int i = 0; i < 6; i++)
+                {
+                        if (input.inputs[input_p2_right + i]) { VERTOPINTERN->joystick_1 |= (1 << i); }
+                }
+                uint32_t rp1 = 0, rp2 = 0;
+                replayJoystick(video.count_frame, &rp1, &rp2);
+                VERTOPINTERN->joystick_0 |= scriptedJoystick(video.count_frame) | rp1;
+                VERTOPINTERN->joystick_1 |= rp2;
+                recordJoystick(video.count_frame, VERTOPINTERN->joystick_0, VERTOPINTERN->joystick_1);
 
                 /*VERTOPINTERN->joystick_analog_0 += 1;
                 VERTOPINTERN->joystick_analog_0 -= 256;*/
