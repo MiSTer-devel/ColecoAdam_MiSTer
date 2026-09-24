@@ -74,13 +74,18 @@ Quickest and most important first. Note anything that differs from "Expect".
 
 ### The R register (change 14) — all new, nothing checked on hardware
 
-- [ ] **Cosmo Fighter II has a star field.** The whole point of the change. In simulation it goes
+- [x] **Cosmo Fighter II has a star field.** Confirmed on hardware 2026-09-24: stars on the title
+      and credits screens. The whole point of the change. In simulation it goes
       from 0-3 dots a frame to roughly ColEm's hundred.
-- [ ] **A general pass, because this changes CPU behaviour for every game.** Frogger, Donkey Kong
+- [x] **A general pass, because this changes CPU behaviour for every game.** Passed 2026-09-24:
+      Frogger and Super Cobra in attract play, DK Jr to its menu, Uridium in play on Zinc, SmartWRITER
+      typed "hello world" with nothing lost, DK Jr disk and Troll's Tale tape boot, T-DOS 4.5 to
+      `A0>` at 256K, PowerPAINT at 512K reads 512, ADAM Diagnostic to its checkout screen. Frogger, Donkey Kong
       Jr, Super Cobra and Uridium boot and play; SmartWRITER boots and types; a disk boots. In
       simulation 176 of 179 cartridges are bit-identical and the other three moved by under 0.4%,
       but that is Console mode against ColEm, not hardware.
-- [ ] **The expander still works with refresh on** — the bank test below. This is the pairing the
+- [x] **The expander still works with refresh on** (2026-09-24: `banktest` 2M white, `uppertest`
+      all six settings correct) — the bank test below. This is the pairing the
       simulation covers least well: the new `MREQ` pulses and the newest memory path together.
 
 ### Memory expander (change 13) — partly checked on hardware 2026-09-19
@@ -90,7 +95,9 @@ Quickest and most important first. Note anything that differs from "Expect".
       its own sizer saturating after four banks, not the core.
 - [x] RAMTEST v2.0 (Eric Pearson) prints "32 Banks Detected" at the 2M setting and tests them.
 - [x] Uridium, SmartWRITER, Frogger, Super Cobra and Donkey Kong Jr still boot.
-- [ ] **`uppertest.col`** — the same 32-bank walk through the **upper** 32K window, which
+- [x] **`uppertest.col`** Passed 2026-09-24, all six settings, each screen one flat colour matching
+      the simulator. The first run came back as garbage screenshots because the cartridge left the
+      display blanked; it now paints the screen as `banktest.col` does. — the same 32-bank walk through the **upper** 32K window, which
       `banktest.col` never exercised. Simulation says the two agree. Load it in Computer mode and
       read the backdrop: black none/64K, green 256K, blue 512K, red 1M, white 2M.
 - [ ] **Anything that hammers the expander**: T-DOS, a RAM disk, PowerPAINT doing real work at

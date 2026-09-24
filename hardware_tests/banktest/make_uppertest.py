@@ -93,8 +93,49 @@ def assemble_worker():
     emit(0x3E, 0x0F)
     label('col')
     emit(0x4F)                             # ld c,a
+
+    # Paint the whole screen that colour, as banktest does. Leaving the display blanked
+    # shows only the backdrop, but the MiSTer's screenshot then comes back as a strip of
+    # stale scaler memory rather than the frame, so the display goes back on over an
+    # emptied screen: every name entry tile 0, whose pattern is zero and colour 00, so the
+    # backdrop shows through. VRAM is whatever the last core left, so write all of it.
+    for reg, val in ((0, 0x00),            # Graphics I
+                     (2, 0x06),            # name table        1800h
+                     (3, 0x80),            # colour table      2000h
+                     (4, 0x01),            # pattern table     0800h
+                     (5, 0x20),            # sprite attributes 1000h
+                     (6, 0x00)):           # sprite patterns   0000h
+        emit(0x3E, val); emit(0xD3, 0xBF)
+        emit(0x3E, 0x80 | reg); emit(0xD3, 0xBF)
+
+    def vram_addr(addr):
+        emit(0x3E, addr & 0xFF); emit(0xD3, 0xBF)
+        emit(0x3E, 0x40 | (addr >> 8)); emit(0xD3, 0xBF)
+
+    vram_addr(0x0800)                      # tile 0's pattern: eight zeros
+    emit(0x06, 0x08)                       # ld b,8
+    label('patclr')
+    emit(0xAF); emit(0xD3, 0xBE)           # xor a ; out (BEh),a
+    jr(0x10, 'patclr')                     # djnz patclr
+    vram_addr(0x2000)                      # tile 0's colour: 00
+    emit(0xAF); emit(0xD3, 0xBE)
+    vram_addr(0x1000)                      # D0h ends the sprite list: no sprites
+    emit(0x3E, 0xD0); emit(0xD3, 0xBE)
+    vram_addr(0x1800)                      # name table: 768 entries of tile 0
+    emit(0x16, 0x03)                       # ld d,3
+    label('nameout')
+    emit(0x06, 0x00)                       # ld b,0   256 per pass
+    label('namein')
+    emit(0xAF); emit(0xD3, 0xBE)
+    jr(0x10, 'namein')                     # djnz namein
+    emit(0x15)                             # dec d
+    jr(0x20, 'nameout')                    # jr nz,nameout
+
+    # backdrop, then the display on: 16K, display on, interrupt off
     emit(0x79); emit(0xD3, 0xBF)
     emit(0x3E, 0x87); emit(0xD3, 0xBF)
+    emit(0x3E, 0xC0); emit(0xD3, 0xBF)
+    emit(0x3E, 0x81); emit(0xD3, 0xBF)
     label('spin')
     jr(0x18, 'spin')
 
